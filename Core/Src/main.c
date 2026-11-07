@@ -84,14 +84,16 @@ icm45686_t imu = {
 HAL_StatusTypeDef imu_status;
 mavlink_t mav;
 
-// Bo loc Gyro va Kalman uoc luong goc
+// Bo loc Gyro, Accel va Kalman uoc luong goc
 biquad2p_filter_t filter_gyro[3];
+biquad2p_filter_t filter_accel[3];
 kalman_angle_t    kalman_roll;
 kalman_angle_t    kalman_pitch;
 
-volatile attitude_t att    = {0};
-volatile float      imu_dt = 0.0f;
-float               gyro_bias[3] = {0.0f};
+volatile attitude_t att           = {0};
+volatile float      accel_filt[3] = {0.0f}; // Gia toc than da loc (g): ax, ay, az
+volatile float      imu_dt        = 0.0f;
+float               gyro_bias[3]  = {0.0f};
 
 BMP388_t            baro;
 bool                baro_status = false;
@@ -569,7 +571,9 @@ void IMU_task(void *argument)
 
   for (int i = 0; i < 3; i++) {
     biquad2p_filter_init(&filter_gyro[i], 92.0f, 500.0f);
+    biquad2p_filter_init(&filter_accel[i], 25.0f, 500.0f); // LPF 25 Hz triet rung motor
   }
+  biquad2p_filter_reset(&filter_accel[2], 1.0f); // Dat san 1g cho truc Z khi de yen tren ban
   kalman_angle_init(&kalman_roll,  0.0015f, 0.003f, 0.03f);
   kalman_angle_init(&kalman_pitch, 0.0015f, 0.003f, 0.03f);
   icm45686_calibrate_gyro(&imu, gyro_bias);
@@ -586,18 +590,26 @@ void IMU_task(void *argument)
       icm45686_read(&imu);
 
       // 1. Anh xa he truc tu chip sang than may bay (ROTATION_ROLL_180_YAW_90)
-      float ax = -imu.accel_g[1];
-      float ay = -imu.accel_g[0];
-      float az = -imu.accel_g[2];
+      float ax_raw = -imu.accel_g[1];
+      float ay_raw = -imu.accel_g[0];
+      float az_raw = -imu.accel_g[2];
 
       float gx = -imu.gyro_dps[1] - gyro_bias[0];
       float gy =  imu.gyro_dps[0] - gyro_bias[1];
       float gz = -imu.gyro_dps[2] - gyro_bias[2];
 
-      // 2. Loc Gyro qua Biquad
+      // 2. Loc Gyro (92 Hz) va Accel (25 Hz - triet rung motor)
       att.roll_rate  = biquad2p_filter_apply(&filter_gyro[0], gx);
       att.pitch_rate = biquad2p_filter_apply(&filter_gyro[1], gy);
       att.yaw_rate   = biquad2p_filter_apply(&filter_gyro[2], gz);
+
+      float ax = biquad2p_filter_apply(&filter_accel[0], ax_raw);
+      float ay = biquad2p_filter_apply(&filter_accel[1], ay_raw);
+      float az = biquad2p_filter_apply(&filter_accel[2], az_raw);
+
+      accel_filt[0] = ax;
+      accel_filt[1] = ay;
+      accel_filt[2] = az;
 
       // 3. Goc tho Accel va Kalman cap nhat goc
       float acc_roll  = atan2f(ay, az) * 57.29578f;
