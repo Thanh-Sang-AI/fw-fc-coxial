@@ -98,7 +98,6 @@ BMP388_t            baro;
 bool                baro_status = false;
 
 // Pipeline loc Barometer va EKF do cao (Chuan PX4 NED: Z-down noi bo, Z-up xuat ngoai)
-outlier_filter_t    filter_baro_outlier;
 median_filter_t     filter_baro_median;
 biquad2p_filter_t   filter_baro;
 altitude_ekf_t      alt_ekf;
@@ -652,7 +651,6 @@ void IMU_task(void *argument)
 void Barometers_task(void *argument)
 {
   /* USER CODE BEGIN Barometers_task */
-  outlier_filter_init(&filter_baro_outlier, 0.2f, 10);
   median_filter_init(&filter_baro_median, 3);
   biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
   // Tham so EKF chuan PX4 (acc_noise=0.35f, bias_noise=0.003f, baro_noise=2.5f)
@@ -661,7 +659,6 @@ void Barometers_task(void *argument)
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
     BMP388_CalibrateGround(&baro, 50);
-    outlier_filter_reset(&filter_baro_outlier, baro.altitude_m);
     median_filter_reset(&filter_baro_median, baro.altitude_m);
     biquad2p_filter_reset(&filter_baro, baro.altitude_m);
     altitude_ekf_reset(&alt_ekf, -baro.altitude_m); // PX4 NED: Z = -altitude
@@ -673,13 +670,10 @@ void Barometers_task(void *argument)
     if (baro_status) {
       BMP388_ReadData(&baro);
 
-      // 1. Loc loai bo nhiễu gai (Outlier Rejection > 0.2m / 20ms)
-      float sanitized_alt = outlier_filter_apply(&filter_baro_outlier, baro.altitude_m);
+      // 1. Loc trung vi 3 mau (Median Filter chuan PX4)
+      float median_alt = median_filter_apply(&filter_baro_median, baro.altitude_m);
 
-      // 2. Loc trung vi 3 mau (Median Filter chuan PX4)
-      float median_alt = median_filter_apply(&filter_baro_median, sanitized_alt);
-
-      // 3. Tam thoi comment bo loc thong thap (Biquad LPF) theo phong cach PX4
+      // 2. Tam thoi comment bo loc thong thap (Biquad LPF) theo phong cach PX4
       // baro_filtered_alt = biquad2p_filter_apply(&filter_baro, median_alt);
       baro_filtered_alt = median_alt;
 
