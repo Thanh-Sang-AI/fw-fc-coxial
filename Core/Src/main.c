@@ -98,12 +98,14 @@ float               gyro_bias[3] = {0.0f};
 BMP388_t            baro;
 bool                baro_status = false;
 
-// Pipeline loc Barometer va EKF do cao (PX4 ECL)
+// Pipeline loc Barometer va EKF do cao (Chuan PX4 NED: Z-down noi bo, Z-up xuat ngoai)
 biquad2p_filter_t   filter_baro;
 altitude_ekf_t      alt_ekf;
 volatile float      baro_filtered_alt = 0.0f;
-volatile float      estimated_alt     = 0.0f;
-volatile float      estimated_vz      = 0.0f;
+volatile float      ned_z             = 0.0f;  // Vi tri NED Z (m): am khi bay len
+volatile float      ned_vz            = 0.0f;  // Van toc NED Vz (m/s): am khi bay len
+volatile float      estimated_alt     = 0.0f;  // Do cao thuc te (m): duong khi bay len
+volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi bay len
 
 /* USER CODE END PV */
 
@@ -609,7 +611,7 @@ void IMU_task(void *argument)
       att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  att.roll_rate,  imu_dt);
       att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, att.pitch_rate, imu_dt);
 
-      // 4. EKF du doan do cao o 500 Hz (Predict step voi gia toc thang dung Earth frame)
+      // 4. EKF du doan do cao o 500 Hz (Predict step theo chuan PX4 NED)
       float r_rad = att.roll * (3.14159265f / 180.0f);
       float p_rad = att.pitch * (3.14159265f / 180.0f);
       float sin_p = sinf(p_rad);
@@ -617,14 +619,19 @@ void IMU_task(void *argument)
       float sin_r = sinf(r_rad);
       float cos_r = cosf(r_rad);
 
-      // Chieu vector gia toc len truc Z thang dung (Z-up), tru di 1g trong luc
-      float az_world_g = (ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p) - 1.0f;
-      float az_world_mps2 = az_world_g * 9.80665f;
+      // Chieu vector gia toc len truc Z-down cua Trai Dat (NED), cong 1g trong luc
+      // az_world_up la phan luc huong len troi. Trong he NED (Z huong xuong):
+      // az_ned = 1.0g - az_world_up (Dung yen = 0g; Bay len (>1g) -> az_ned < 0)
+      float az_world_up = (ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p);
+      float az_ned_g    = 1.0f - az_world_up;
+      float az_ned_mps2 = az_ned_g * 9.80665f;
 
       taskENTER_CRITICAL();
-      altitude_ekf_predict(&alt_ekf, az_world_mps2, imu_dt);
-      estimated_alt = alt_ekf.z;
-      estimated_vz  = alt_ekf.vz;
+      altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
+      ned_z         = alt_ekf.z;
+      ned_vz        = alt_ekf.vz;
+      estimated_alt = -alt_ekf.z;
+      estimated_vz  = -alt_ekf.vz;
       taskEXIT_CRITICAL();
     }
 
@@ -650,7 +657,7 @@ void Barometers_task(void *argument)
   if (baro_status) {
     BMP388_CalibrateGround(&baro, 50);
     biquad2p_filter_reset(&filter_baro, baro.altitude_m);
-    altitude_ekf_reset(&alt_ekf, baro.altitude_m);
+    altitude_ekf_reset(&alt_ekf, -baro.altitude_m); // PX4 NED: Z = -altitude
   }
 
   static float last_valid_alt = 0.0f;
@@ -690,11 +697,13 @@ void Barometers_task(void *argument)
       // 2. Loc thong thap bac 2 (Biquad 2-pole Butterworth) tai 10 Hz
       baro_filtered_alt = biquad2p_filter_apply(&filter_baro, sanitized_alt);
 
-      // 3. EKF cap nhat do cao (kieu PX4 ECL)
+      // 3. EKF cap nhat do cao theo chuan PX4 NED (Z = -altitude)
       taskENTER_CRITICAL();
-      altitude_ekf_update_baro(&alt_ekf, baro_filtered_alt);
-      estimated_alt = alt_ekf.z;
-      estimated_vz  = alt_ekf.vz;
+      altitude_ekf_update_baro(&alt_ekf, -baro_filtered_alt);
+      ned_z         = alt_ekf.z;
+      ned_vz        = alt_ekf.vz;
+      estimated_alt = -alt_ekf.z;
+      estimated_vz  = -alt_ekf.vz;
       taskEXIT_CRITICAL();
     }
     vTaskDelay(20); // 50 Hz ODR cua BMP388
