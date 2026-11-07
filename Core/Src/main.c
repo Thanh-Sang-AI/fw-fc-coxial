@@ -26,6 +26,8 @@
 #include "drivers/bmp388/bmp388.h"
 #include "protocol/mavlink/mavlink.h"
 #include "math/filter/filter.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <math.h>
 
 /* USER CODE END Includes */
@@ -95,6 +97,13 @@ float               gyro_bias[3] = {0.0f};
 
 BMP388_t            baro;
 bool                baro_status = false;
+
+// Pipeline loc Barometer va EKF do cao (PX4 ECL)
+biquad2p_filter_t   filter_baro;
+altitude_ekf_t      alt_ekf;
+volatile float      baro_filtered_alt = 0.0f;
+volatile float      estimated_alt     = 0.0f;
+volatile float      estimated_vz      = 0.0f;
 
 /* USER CODE END PV */
 
@@ -599,6 +608,24 @@ void IMU_task(void *argument)
       // 3. Kalman cap nhat goc
       att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  att.roll_rate,  imu_dt);
       att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, att.pitch_rate, imu_dt);
+
+      // 4. EKF du doan do cao o 500 Hz (Predict step voi gia toc thang dung Earth frame)
+      float r_rad = att.roll * (3.14159265f / 180.0f);
+      float p_rad = att.pitch * (3.14159265f / 180.0f);
+      float sin_p = sinf(p_rad);
+      float cos_p = cosf(p_rad);
+      float sin_r = sinf(r_rad);
+      float cos_r = cosf(r_rad);
+
+      // Chieu vector gia toc len truc Z thang dung (Z-up), tru di 1g trong luc
+      float az_world_g = (ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p) - 1.0f;
+      float az_world_mps2 = az_world_g * 9.80665f;
+
+      taskENTER_CRITICAL();
+      altitude_ekf_predict(&alt_ekf, az_world_mps2, imu_dt);
+      estimated_alt = alt_ekf.z;
+      estimated_vz  = alt_ekf.vz;
+      taskEXIT_CRITICAL();
     }
 
     vTaskDelay(2);
@@ -616,16 +643,59 @@ void IMU_task(void *argument)
 void Barometers_task(void *argument)
 {
   /* USER CODE BEGIN Barometers_task */
+  biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
+  altitude_ekf_init(&alt_ekf, 0.5f, 0.01f, 0.20f);
+
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
     BMP388_CalibrateGround(&baro, 50);
+    biquad2p_filter_reset(&filter_baro, baro.altitude_m);
+    altitude_ekf_reset(&alt_ekf, baro.altitude_m);
   }
+
+  static float last_valid_alt = 0.0f;
+  static uint8_t outlier_count = 0;
+  static bool baro_sample_init = false;
 
   /* Infinite loop */
   for(;;)
   {
     if (baro_status) {
       BMP388_ReadData(&baro);
+
+      float raw_alt = baro.altitude_m;
+      if (!baro_sample_init) {
+        last_valid_alt = raw_alt;
+        baro_sample_init = true;
+      }
+
+      // 1. Outlier Rejection: Bo qua nhiễu gai bien thien > 0.2m trong 1 chu ky (20ms)
+      float sanitized_alt;
+      if (fabsf(raw_alt - last_valid_alt) > 0.2f) {
+        outlier_count++;
+        if (outlier_count < 10) {
+          sanitized_alt = last_valid_alt; // Loai bo spike, giu gia tri hop le truoc do
+        } else {
+          // Vuot qua 10 mau lien tiep (~200ms) -> dong bo lai theo su thay doi thuc te
+          sanitized_alt = raw_alt;
+          last_valid_alt = raw_alt;
+          outlier_count = 0;
+        }
+      } else {
+        outlier_count = 0;
+        last_valid_alt = raw_alt;
+        sanitized_alt = raw_alt;
+      }
+
+      // 2. Loc thong thap bac 2 (Biquad 2-pole Butterworth) tai 10 Hz
+      baro_filtered_alt = biquad2p_filter_apply(&filter_baro, sanitized_alt);
+
+      // 3. EKF cap nhat do cao (kieu PX4 ECL)
+      taskENTER_CRITICAL();
+      altitude_ekf_update_baro(&alt_ekf, baro_filtered_alt);
+      estimated_alt = alt_ekf.z;
+      estimated_vz  = alt_ekf.vz;
+      taskEXIT_CRITICAL();
     }
     vTaskDelay(20); // 50 Hz ODR cua BMP388
   }
