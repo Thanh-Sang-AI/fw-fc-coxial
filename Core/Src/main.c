@@ -98,8 +98,10 @@ bool                baro_status = false;
 
 // Pipeline loc Barometer va EKF do cao (Chuan PX4 NED: Z-down noi bo, Z-up xuat ngoai)
 outlier_filter_t    filter_baro_outlier;
+median_filter_t     filter_baro_median;
 biquad2p_filter_t   filter_baro;
 altitude_ekf_t      alt_ekf;
+volatile bool       baro_has_new_data = false;
 volatile float      baro_filtered_alt = 0.0f;
 volatile float      ned_z             = 0.0f;  // Vi tri NED Z (m): am khi bay len
 volatile float      ned_vz            = 0.0f;  // Van toc NED Vz (m/s): am khi bay len
@@ -604,7 +606,7 @@ void IMU_task(void *argument)
       att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  att.roll_rate,  imu_dt);
       att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, att.pitch_rate, imu_dt);
 
-      // 4. EKF du doan do cao theo chuan PX4 NED (500 Hz)
+      // 4. EKF du doan do cao lien tuc o 500 Hz (Predict step)
       float r_rad = att.roll  * 0.0174532925f;
       float p_rad = att.pitch * 0.0174532925f;
       float sin_p = sinf(p_rad), cos_p = cosf(p_rad);
@@ -614,6 +616,14 @@ void IMU_task(void *argument)
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
+
+      // 5. Chi cap nhat EKF tu Baro khi co mau moi (nhip 50 Hz, moi ~10 chu ky IMU)
+      if (baro_has_new_data) {
+        baro_has_new_data = false;
+        altitude_ekf_update_baro(&alt_ekf, -baro_filtered_alt);
+      }
+
+      // 6. Xuat ket qua Fusion o 500 Hz
       ned_z         = alt_ekf.z;
       ned_vz        = alt_ekf.vz;
       estimated_alt = -alt_ekf.z;
@@ -635,15 +645,17 @@ void IMU_task(void *argument)
 void Barometers_task(void *argument)
 {
   /* USER CODE BEGIN Barometers_task */
-  biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
   outlier_filter_init(&filter_baro_outlier, 0.2f, 10);
+  median_filter_init(&filter_baro_median, 5);
+  biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
   altitude_ekf_init(&alt_ekf, 0.5f, 0.01f, 0.20f);
 
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
     BMP388_CalibrateGround(&baro, 50);
-    biquad2p_filter_reset(&filter_baro, baro.altitude_m);
     outlier_filter_reset(&filter_baro_outlier, baro.altitude_m);
+    median_filter_reset(&filter_baro_median, baro.altitude_m);
+    biquad2p_filter_reset(&filter_baro, baro.altitude_m);
     altitude_ekf_reset(&alt_ekf, -baro.altitude_m); // PX4 NED: Z = -altitude
   }
 
@@ -656,15 +668,14 @@ void Barometers_task(void *argument)
       // 1. Loc loai bo nhiễu gai (Outlier Rejection > 0.2m / 20ms)
       float sanitized_alt = outlier_filter_apply(&filter_baro_outlier, baro.altitude_m);
 
-      // 2. Loc thong thap bac 2 tai 10 Hz
-      baro_filtered_alt = biquad2p_filter_apply(&filter_baro, sanitized_alt);
+      // 2. Loc trung vi 5 mau (Median Filter)
+      float median_alt = median_filter_apply(&filter_baro_median, sanitized_alt);
 
-      // 3. EKF cap nhat do cao theo chuan PX4 NED (Z = -altitude)
-      altitude_ekf_update_baro(&alt_ekf, -baro_filtered_alt);
-      ned_z         = alt_ekf.z;
-      ned_vz        = alt_ekf.vz;
-      estimated_alt = -alt_ekf.z;
-      estimated_vz  = -alt_ekf.vz;
+      // 3. Loc thong thap bac 2 tai 10 Hz
+      baro_filtered_alt = biquad2p_filter_apply(&filter_baro, median_alt);
+
+      // 4. Bat co bao cho IMU_task cap nhat EKF
+      baro_has_new_data = true;
     }
     vTaskDelay(20); // 50 Hz ODR cua BMP388
   }
