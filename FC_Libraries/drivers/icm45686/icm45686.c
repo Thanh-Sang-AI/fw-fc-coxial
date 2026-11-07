@@ -98,14 +98,14 @@ HAL_StatusTypeDef icm45686_read(icm45686_t *dev)
 	HAL_StatusTypeDef st = read_regs(dev, REG_ACCEL_DATA_X1_UI, b, sizeof(b));
 	if (st != HAL_OK) return st;
 
-	/* Chip default is little-endian: low byte at the lower address */
+	/* Chip output is Big-Endian: high byte (X1) at lower address, low byte (X0) at higher address */
 	for (int i = 0; i < 3; i++) {
-		dev->accel_raw[i] = (int16_t)((b[2 * i + 1] << 8) | b[2 * i]);
-		dev->gyro_raw[i]  = (int16_t)((b[2 * i + 7] << 8) | b[2 * i + 6]);
+		dev->accel_raw[i] = (int16_t)(((int16_t)b[2 * i] << 8) | b[2 * i + 1]);
+		dev->gyro_raw[i]  = (int16_t)(((int16_t)b[2 * i + 6] << 8) | b[2 * i + 7]);
 		dev->accel_g[i]   = dev->accel_raw[i] / ACCEL_LSB_PER_G;
 		dev->gyro_dps[i]  = dev->gyro_raw[i] / GYRO_LSB_PER_DPS;
 	}
-	dev->temp_raw = (int16_t)((b[13] << 8) | b[12]);
+	dev->temp_raw = (int16_t)(((int16_t)b[12] << 8) | b[13]);
 	dev->temp_c   = dev->temp_raw / TEMP_LSB_PER_C + TEMP_OFFSET_C;
 
 	return HAL_OK;
