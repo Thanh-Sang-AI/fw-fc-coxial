@@ -250,3 +250,51 @@ void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt)
     ekf->P[2][1] = ekf->P[1][2];
     ekf->P[2][2] -= K2 * P02;
 }
+
+/* =========================================================================
+   5. Outlier Rejection Filter
+   ========================================================================= */
+void outlier_filter_init(outlier_filter_t *f, float max_delta, uint8_t max_consecutive)
+{
+    if (f == NULL) return;
+    f->max_delta        = max_delta;
+    f->max_consecutive  = (max_consecutive == 0) ? 10 : max_consecutive;
+    f->last_valid       = 0.0f;
+    f->count            = 0;
+    f->initialized      = false;
+}
+
+void outlier_filter_reset(outlier_filter_t *f, float initial_val)
+{
+    if (f == NULL) return;
+    f->last_valid   = initial_val;
+    f->count        = 0;
+    f->initialized  = true;
+}
+
+float outlier_filter_apply(outlier_filter_t *f, float input)
+{
+    if (f == NULL) return input;
+    if (!f->initialized) {
+        f->last_valid   = input;
+        f->initialized  = true;
+        f->count        = 0;
+        return input;
+    }
+
+    if (fabsf(input - f->last_valid) > f->max_delta) {
+        f->count++;
+        if (f->count < f->max_consecutive) {
+            return f->last_valid; // Loai bo spike, tra ve gia tri hop le truoc do
+        } else {
+            // Vuot nguong qua nhieu lan lien tiep -> chap nhan va dong bo lai
+            f->last_valid = input;
+            f->count      = 0;
+            return input;
+        }
+    }
+
+    f->count      = 0;
+    f->last_valid = input;
+    return input;
+}

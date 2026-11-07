@@ -84,6 +84,21 @@ void altitude_ekf_reset(altitude_ekf_t *ekf, float initial_alt);
 void altitude_ekf_predict(altitude_ekf_t *ekf, float accel_z_world, float dt);
 void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt);
 
+/* =========================================================================
+   5. Outlier Rejection Filter (Khu nhieu gai bien thien dot bien)
+   ========================================================================= */
+typedef struct {
+    float   max_delta;          // Nguong bien thien toi da cho phep giua 2 mau lien tiep
+    float   last_valid;         // Gia tri hop le gan nhat
+    uint8_t count;              // Dem so mau vuot nguong lien tiep
+    uint8_t max_consecutive;    // So mau vuot nguong lien tiep de chap nhan dong bo lai
+    bool    initialized;
+} outlier_filter_t;
+
+void  outlier_filter_init(outlier_filter_t *f, float max_delta, uint8_t max_consecutive);
+void  outlier_filter_reset(outlier_filter_t *f, float initial_val);
+float outlier_filter_apply(outlier_filter_t *f, float input);
+
 #ifdef __cplusplus
 }
 #endif
