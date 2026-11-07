@@ -576,13 +576,13 @@ void IMU_task(void *argument)
     if (imu_status == HAL_OK) {
       icm45686_read(&imu);
 
-      // Dao chieu truc Z do chip han o mat duoi PCB
-      float ax =  imu.accel_g[0];
-      float ay =  imu.accel_g[1];
+      // Anh xa he truc tu chip sang than may bay (ROTATION_ROLL_180_YAW_90)
+      float ax = -imu.accel_g[1];
+      float ay = -imu.accel_g[0];
       float az = -imu.accel_g[2];
 
-      float gx =  imu.gyro_dps[0] - gyro_bias[0];
-      float gy =  imu.gyro_dps[1] - gyro_bias[1];
+      float gx = -imu.gyro_dps[1] - gyro_bias[0];
+      float gy = -imu.gyro_dps[0] - gyro_bias[1];
       float gz = -imu.gyro_dps[2] - gyro_bias[2];
 
 

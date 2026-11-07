@@ -115,14 +115,16 @@ HAL_StatusTypeDef icm45686_calibrate_gyro(icm45686_t *dev, float bias[3])
 {
 	if (dev == NULL || dev->hspi == NULL || bias == NULL) return HAL_ERROR;
 
+	vTaskDelay(200); // Cho MEMS on dinh dao dong sau khi khoi dong
+
 	float sum[3] = {0.0f, 0.0f, 0.0f};
 	const int samples = 500;
 
 	for (int i = 0; i < samples; i++) {
 		if (icm45686_read(dev) != HAL_OK) return HAL_ERROR;
-		sum[0] +=  dev->gyro_dps[0];
-		sum[1] +=  dev->gyro_dps[1];
-		sum[2] += -dev->gyro_dps[2]; // Dao chieu truc Z do chip han o mat duoi PCB
+		sum[0] += -dev->gyro_dps[1]; // Body Roll rate (X than = -Y chip)
+		sum[1] += -dev->gyro_dps[0]; // Body Pitch rate (Y than = -X chip)
+		sum[2] += -dev->gyro_dps[2]; // Body Yaw rate (Z than = -Z chip)
 		vTaskDelay(2);
 	}
 
