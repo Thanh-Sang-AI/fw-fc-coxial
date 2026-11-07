@@ -2,7 +2,15 @@
 #define MATH_FILTER_FILTER_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* =========================================================================
+   1. Biquad 2-Pole Butterworth Low-Pass Filter (Gyro & Baro)
+   ========================================================================= */
 typedef struct {
     float b0, b1, b2, a1, a2;
     float s1, s2;
@@ -10,12 +18,13 @@ typedef struct {
 
 void  biquad2p_filter_init(biquad2p_filter_t *f, float cutoff_hz, float sample_hz);
 float biquad2p_filter_apply(biquad2p_filter_t *f, float input);
+void  biquad2p_filter_reset(biquad2p_filter_t *f, float value);
 
-/*
- * Ban chat he so Kalman trong bai toan Sensor Fusion (IMU):
- * - Q (Process Noise): Ly thuyet la nhieu qua trinh / moi truong -> vao bai toan nay la Nhieu Gyro.
- * - R (Measurement Noise): Ly thuyet la nhieu cam bien do luong -> vao bai toan nay la Nhieu Accel.
- */
+/* =========================================================================
+   2. 2-State Linear Kalman Filter for Attitude (Roll / Pitch)
+   - Q (Process Noise): Nhieu Gyro
+   - R (Measurement Noise): Nhieu Accel
+   ========================================================================= */
 typedef struct {
     float angle, bias;
     float P[2][2];
@@ -35,6 +44,48 @@ typedef struct {
     float yaw_rate;    // Toc do goc Yaw sau loc (deg/s)
 } attitude_t;
 
+/* =========================================================================
+   3. Median Filter (Co the cau hinh kich thuoc cua so: 3, 5, 9... mau)
+   ========================================================================= */
+#define MEDIAN_FILTER_MAX_SIZE 15
 
+typedef struct {
+    float buf[MEDIAN_FILTER_MAX_SIZE];
+    uint8_t size;     // Kich thuoc cua so (vi du: 3, 5, 9)
+    uint8_t count;    // So mau hop le hien co
+    uint8_t idx;      // Vi tri ghi xoay vong
+} median_filter_t;
+
+typedef median_filter_t medianfilter_t; // Alias theo yeu cau
+
+void  median_filter_init(median_filter_t *f, uint8_t size);
+float median_filter_apply(median_filter_t *f, float input);
+void  median_filter_reset(median_filter_t *f, float value);
+
+/* =========================================================================
+   4. PX4 ECL EKF 3-State Altitude Filter (IMU Accel Z + Baro)
+   Trang thai: [Do cao z (m), Van toc leo vz (m/s), Accel Z bias (m/s^2)]
+   - Predict: 500 Hz voi gia toc thang dung he quy chieu Trai Dat
+   - Update: 50 Hz voi do cao Barometer
+   ========================================================================= */
+typedef struct {
+    float z;            // Do cao uoc luong (m)
+    float vz;           // Van toc leo uoc luong (m/s)
+    float accel_bias;   // Bias gia toc truc Z (m/s^2)
+    float P[3][3];      // Ma tran hiep phuong sai sai so
+    float Q_accel;      // Phuong sai nhieu gia toc
+    float Q_bias;       // Phuong sai nhieu bias gia toc
+    float R_baro;       // Phuong sai nhieu do luong Baro
+    bool  initialized;
+} altitude_ekf_t;
+
+void altitude_ekf_init(altitude_ekf_t *ekf, float acc_noise, float bias_noise, float baro_noise);
+void altitude_ekf_reset(altitude_ekf_t *ekf, float initial_alt);
+void altitude_ekf_predict(altitude_ekf_t *ekf, float accel_z_world, float dt);
+void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MATH_FILTER_FILTER_H_ */
