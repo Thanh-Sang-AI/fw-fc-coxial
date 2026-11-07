@@ -582,7 +582,7 @@ void IMU_task(void *argument)
       float az = -imu.accel_g[2];
 
       float gx = -imu.gyro_dps[1] - gyro_bias[0];
-      float gy = -imu.gyro_dps[0] - gyro_bias[1];
+      float gy =  imu.gyro_dps[0] - gyro_bias[1];
       float gz = -imu.gyro_dps[2] - gyro_bias[2];
 
 

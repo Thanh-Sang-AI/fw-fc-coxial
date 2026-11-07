@@ -123,7 +123,7 @@ HAL_StatusTypeDef icm45686_calibrate_gyro(icm45686_t *dev, float bias[3])
 	for (int i = 0; i < samples; i++) {
 		if (icm45686_read(dev) != HAL_OK) return HAL_ERROR;
 		sum[0] += -dev->gyro_dps[1]; // Body Roll rate (X than = -Y chip)
-		sum[1] += -dev->gyro_dps[0]; // Body Pitch rate (Y than = -X chip)
+		sum[1] +=  dev->gyro_dps[0]; // Body Pitch rate (Y than = +X chip)
 		sum[2] += -dev->gyro_dps[2]; // Body Yaw rate (Z than = -Z chip)
 		vTaskDelay(2);
 	}
