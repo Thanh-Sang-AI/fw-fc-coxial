@@ -120,70 +120,12 @@ void IMU_task(void *argument);
 void Barometers_task(void *argument);
 
 /* USER CODE BEGIN PFP */
-static void imu_pipeline_step(float dt);
-static void baro_pipeline_step(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static void imu_pipeline_step(float dt)
-{
-  icm45686_read(&imu);
 
-  // 1. Anh xa he truc tu chip sang than may bay (ROTATION_ROLL_180_YAW_90)
-  float ax = -imu.accel_g[1];
-  float ay = -imu.accel_g[0];
-  float az = -imu.accel_g[2];
-
-  float gx = -imu.gyro_dps[1] - gyro_bias[0];
-  float gy =  imu.gyro_dps[0] - gyro_bias[1];
-  float gz = -imu.gyro_dps[2] - gyro_bias[2];
-
-  // 2. Loc Gyro qua Biquad
-  att.roll_rate  = biquad2p_filter_apply(&filter_gyro[0], gx);
-  att.pitch_rate = biquad2p_filter_apply(&filter_gyro[1], gy);
-  att.yaw_rate   = biquad2p_filter_apply(&filter_gyro[2], gz);
-
-  // 3. Goc tho Accel va Kalman cap nhat goc
-  float acc_roll  = atan2f(ay, az) * 57.29578f;
-  float acc_pitch = atan2f(ax, sqrtf(ay * ay + az * az)) * 57.29578f;
-
-  att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  att.roll_rate,  dt);
-  att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, att.pitch_rate, dt);
-
-  // 4. EKF du doan do cao theo chuan PX4 NED (500 Hz)
-  float r_rad = att.roll  * 0.0174532925f;
-  float p_rad = att.pitch * 0.0174532925f;
-  float sin_p = sinf(p_rad), cos_p = cosf(p_rad);
-  float sin_r = sinf(r_rad), cos_r = cosf(r_rad);
-
-  float az_world_up = (ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p);
-  float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
-
-  altitude_ekf_predict(&alt_ekf, az_ned_mps2, dt);
-  ned_z         = alt_ekf.z;
-  ned_vz        = alt_ekf.vz;
-  estimated_alt = -alt_ekf.z;
-  estimated_vz  = -alt_ekf.vz;
-}
-
-static void baro_pipeline_step(void)
-{
-  BMP388_ReadData(&baro);
-
-  // 1. Loc loai bo nhiễu gai (Outlier Rejection > 0.2m / 20ms)
-  float sanitized_alt = outlier_filter_apply(&filter_baro_outlier, baro.altitude_m);
-
-  // 2. Loc thong thap bac 2 tai 10 Hz
-  baro_filtered_alt = biquad2p_filter_apply(&filter_baro, sanitized_alt);
-
-  // 3. EKF cap nhat do cao theo chuan PX4 NED (Z = -altitude)
-  altitude_ekf_update_baro(&alt_ekf, -baro_filtered_alt);
-  ned_z         = alt_ekf.z;
-  ned_vz        = alt_ekf.vz;
-  estimated_alt = -alt_ekf.z;
-  estimated_vz  = -alt_ekf.vz;
-}
 /* USER CODE END 0 */
 
 /**
@@ -639,7 +581,43 @@ void IMU_task(void *argument)
     last_cycle = now_cycle;
 
     if (imu_status == HAL_OK) {
-      imu_pipeline_step(imu_dt);
+      icm45686_read(&imu);
+
+      // 1. Anh xa he truc tu chip sang than may bay (ROTATION_ROLL_180_YAW_90)
+      float ax = -imu.accel_g[1];
+      float ay = -imu.accel_g[0];
+      float az = -imu.accel_g[2];
+
+      float gx = -imu.gyro_dps[1] - gyro_bias[0];
+      float gy =  imu.gyro_dps[0] - gyro_bias[1];
+      float gz = -imu.gyro_dps[2] - gyro_bias[2];
+
+      // 2. Loc Gyro qua Biquad
+      att.roll_rate  = biquad2p_filter_apply(&filter_gyro[0], gx);
+      att.pitch_rate = biquad2p_filter_apply(&filter_gyro[1], gy);
+      att.yaw_rate   = biquad2p_filter_apply(&filter_gyro[2], gz);
+
+      // 3. Goc tho Accel va Kalman cap nhat goc
+      float acc_roll  = atan2f(ay, az) * 57.29578f;
+      float acc_pitch = atan2f(ax, sqrtf(ay * ay + az * az)) * 57.29578f;
+
+      att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  att.roll_rate,  imu_dt);
+      att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, att.pitch_rate, imu_dt);
+
+      // 4. EKF du doan do cao theo chuan PX4 NED (500 Hz)
+      float r_rad = att.roll  * 0.0174532925f;
+      float p_rad = att.pitch * 0.0174532925f;
+      float sin_p = sinf(p_rad), cos_p = cosf(p_rad);
+      float sin_r = sinf(r_rad), cos_r = cosf(r_rad);
+
+      float az_world_up = (ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p);
+      float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
+
+      altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
+      ned_z         = alt_ekf.z;
+      ned_vz        = alt_ekf.vz;
+      estimated_alt = -alt_ekf.z;
+      estimated_vz  = -alt_ekf.vz;
     }
 
     vTaskDelay(2);
@@ -673,7 +651,20 @@ void Barometers_task(void *argument)
   for(;;)
   {
     if (baro_status) {
-      baro_pipeline_step();
+      BMP388_ReadData(&baro);
+
+      // 1. Loc loai bo nhiễu gai (Outlier Rejection > 0.2m / 20ms)
+      float sanitized_alt = outlier_filter_apply(&filter_baro_outlier, baro.altitude_m);
+
+      // 2. Loc thong thap bac 2 tai 10 Hz
+      baro_filtered_alt = biquad2p_filter_apply(&filter_baro, sanitized_alt);
+
+      // 3. EKF cap nhat do cao theo chuan PX4 NED (Z = -altitude)
+      altitude_ekf_update_baro(&alt_ekf, -baro_filtered_alt);
+      ned_z         = alt_ekf.z;
+      ned_vz        = alt_ekf.vz;
+      estimated_alt = -alt_ekf.z;
+      estimated_vz  = -alt_ekf.vz;
     }
     vTaskDelay(20); // 50 Hz ODR cua BMP388
   }
