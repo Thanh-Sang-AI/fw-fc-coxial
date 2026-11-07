@@ -1,4 +1,5 @@
 #include "bmp388.h"
+#include "cmsis_os.h"
 #include <string.h>
 #include <math.h>
 
@@ -215,4 +216,29 @@ void BMP388_SetGroundAltitude(BMP388_t *dev, float ground_alt_m)
 {
 	if (dev == NULL) return;
 	dev->ground_altitude_m = ground_alt_m;
+}
+
+bool BMP388_CalibrateGround(BMP388_t *dev, uint16_t samples)
+{
+	if (dev == NULL || samples == 0) return false;
+
+	dev->ground_altitude_m = 0.0f;
+	float sum_alt = 0.0f;
+	uint16_t valid_cnt = 0;
+
+	for (uint16_t i = 0; i < samples; i++) {
+		if (BMP388_ReadData(dev)) {
+			sum_alt += dev->altitude_m;
+			valid_cnt++;
+		}
+		vTaskDelay(20);
+	}
+
+	if (valid_cnt > 0) {
+		dev->ground_altitude_m = sum_alt / (float)valid_cnt;
+		dev->altitude_m = 0.0f;
+		return true;
+	}
+
+	return false;
 }

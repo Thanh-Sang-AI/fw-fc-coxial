@@ -50,6 +50,11 @@ bool BMP388_ReadData(BMP388_t *dev);
  */
 void BMP388_SetGroundAltitude(BMP388_t *dev, float ground_alt_m);
 
+/**
+ * @brief  Lay mau do cao trung binh moc mat dat (0m) khi khoi dong
+ */
+bool BMP388_CalibrateGround(BMP388_t *dev, uint16_t samples);
+
 #ifdef __cplusplus
 }
 #endif

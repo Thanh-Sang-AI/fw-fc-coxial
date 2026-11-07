@@ -2,7 +2,6 @@
 #define MATH_FILTER_FILTER_H_
 
 #include <stdbool.h>
-#include "drivers/icm45686/icm45686.h"
 
 typedef struct {
     float b0, b1, b2, a1, a2;
@@ -36,6 +35,6 @@ typedef struct {
     float yaw_rate;    // Toc do goc Yaw sau loc (deg/s)
 } attitude_t;
 
-void imu_calibrate_gyro(icm45686_t *imu, float bias[3]);
+
 
 #endif /* MATH_FILTER_FILTER_H_ */

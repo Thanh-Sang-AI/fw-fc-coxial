@@ -28,6 +28,7 @@ uint8_t           icm45686_read_reg(icm45686_t *dev, uint8_t reg);
 HAL_StatusTypeDef icm45686_write_reg(icm45686_t *dev, uint8_t reg, uint8_t value);
 HAL_StatusTypeDef icm45686_init(icm45686_t *dev);
 HAL_StatusTypeDef icm45686_read(icm45686_t *dev);
+HAL_StatusTypeDef icm45686_calibrate_gyro(icm45686_t *dev, float bias[3]);
 
 #ifdef __cplusplus
 }

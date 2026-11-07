@@ -1,5 +1,4 @@
 #include "math/filter/filter.h"
-#include "cmsis_os.h"
 #include <math.h>
 
 void biquad2p_filter_init(biquad2p_filter_t *f, float cutoff_hz, float sample_hz)
@@ -62,22 +61,4 @@ float kalman_angle_update(kalman_angle_t *k, float new_angle_acc, float new_rate
     k->P[1][1] -= K1 * p01;
 
     return k->angle;
-}
-
-void imu_calibrate_gyro(icm45686_t *imu, float bias[3])
-{
-    float sum[3] = {0.0f, 0.0f, 0.0f};
-    const int samples = 500;
-
-    for (int i = 0; i < samples; i++) {
-        icm45686_read(imu);
-        sum[0] +=  imu->gyro_dps[0];
-        sum[1] +=  imu->gyro_dps[1];
-        sum[2] += -imu->gyro_dps[2]; // Dao chieu truc Z do chip han o mat duoi PCB
-        vTaskDelay(2);
-    }
-
-    bias[0] = sum[0] / (float)samples;
-    bias[1] = sum[1] / (float)samples;
-    bias[2] = sum[2] / (float)samples;
 }

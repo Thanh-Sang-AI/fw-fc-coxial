@@ -1,5 +1,6 @@
 #include <string.h>
 #include "icm45686.h"
+#include "cmsis_os.h"
 
 /* Bank 0 registers */
 #define REG_ACCEL_DATA_X1_UI     0x00   // 0x00..0x0D: accel XYZ, gyro XYZ, temp
@@ -107,5 +108,26 @@ HAL_StatusTypeDef icm45686_read(icm45686_t *dev)
 	dev->temp_raw = (int16_t)((b[13] << 8) | b[12]);
 	dev->temp_c   = dev->temp_raw / TEMP_LSB_PER_C + TEMP_OFFSET_C;
 
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef icm45686_calibrate_gyro(icm45686_t *dev, float bias[3])
+{
+	if (dev == NULL || dev->hspi == NULL || bias == NULL) return HAL_ERROR;
+
+	float sum[3] = {0.0f, 0.0f, 0.0f};
+	const int samples = 500;
+
+	for (int i = 0; i < samples; i++) {
+		if (icm45686_read(dev) != HAL_OK) return HAL_ERROR;
+		sum[0] +=  dev->gyro_dps[0];
+		sum[1] +=  dev->gyro_dps[1];
+		sum[2] += -dev->gyro_dps[2]; // Dao chieu truc Z do chip han o mat duoi PCB
+		vTaskDelay(2);
+	}
+
+	bias[0] = sum[0] / (float)samples;
+	bias[1] = sum[1] / (float)samples;
+	bias[2] = sum[2] / (float)samples;
 	return HAL_OK;
 }

@@ -563,7 +563,7 @@ void IMU_task(void *argument)
   kalman_angle_init(&kalman_pitch, 0.0015f, 0.003f, 0.03f);
 
   // Can chinh Gyro bias khi khoi dong (500 mau ~ 1s, yeu cau giu yen FC tren ban)
-  imu_calibrate_gyro(&imu, gyro_bias);
+  icm45686_calibrate_gyro(&imu, gyro_bias);
 
   uint32_t last_cycle = DWT->CYCCNT;
 
@@ -617,6 +617,9 @@ void Barometers_task(void *argument)
 {
   /* USER CODE BEGIN Barometers_task */
   baro_status = BMP388_Init(&baro, &hi2c2);
+  if (baro_status) {
+    BMP388_CalibrateGround(&baro, 50);
+  }
 
   /* Infinite loop */
   for(;;)
