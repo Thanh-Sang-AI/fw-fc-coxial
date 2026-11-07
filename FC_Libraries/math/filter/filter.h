@@ -42,6 +42,9 @@ typedef struct {
     float roll_rate;   // Toc do goc Roll sau loc (deg/s)
     float pitch_rate;  // Toc do goc Pitch sau loc (deg/s)
     float yaw_rate;    // Toc do goc Yaw sau loc (deg/s)
+    float ax;          // Gia toc than truc X sau loc (g)
+    float ay;          // Gia toc than truc Y sau loc (g)
+    float az;          // Gia toc than truc Z sau loc (g)
 } attitude_t;
 
 /* =========================================================================

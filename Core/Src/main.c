@@ -90,10 +90,9 @@ biquad2p_filter_t filter_accel[3];
 kalman_angle_t    kalman_roll;
 kalman_angle_t    kalman_pitch;
 
-volatile attitude_t att           = {0};
-volatile float      accel_filt[3] = {0.0f}; // Gia toc than da loc (g): ax, ay, az
-volatile float      imu_dt        = 0.0f;
-float               gyro_bias[3]  = {0.0f};
+volatile attitude_t att       = {0};
+volatile float      imu_dt    = 0.0f;
+float               gyro_bias[3] = {0.0f};
 
 BMP388_t            baro;
 bool                baro_status = false;
@@ -603,17 +602,13 @@ void IMU_task(void *argument)
       att.pitch_rate = biquad2p_filter_apply(&filter_gyro[1], gy);
       att.yaw_rate   = biquad2p_filter_apply(&filter_gyro[2], gz);
 
-      float ax = biquad2p_filter_apply(&filter_accel[0], ax_raw);
-      float ay = biquad2p_filter_apply(&filter_accel[1], ay_raw);
-      float az = biquad2p_filter_apply(&filter_accel[2], az_raw);
-
-      accel_filt[0] = ax;
-      accel_filt[1] = ay;
-      accel_filt[2] = az;
+      att.ax = biquad2p_filter_apply(&filter_accel[0], ax_raw);
+      att.ay = biquad2p_filter_apply(&filter_accel[1], ay_raw);
+      att.az = biquad2p_filter_apply(&filter_accel[2], az_raw);
 
       // 3. Goc tho Accel va Kalman cap nhat goc
-      float acc_roll  = atan2f(ay, az) * 57.29578f;
-      float acc_pitch = atan2f(ax, sqrtf(ay * ay + az * az)) * 57.29578f;
+      float acc_roll  = atan2f(att.ay, att.az) * 57.29578f;
+      float acc_pitch = atan2f(att.ax, sqrtf(att.ay * att.ay + att.az * att.az)) * 57.29578f;
 
       att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  att.roll_rate,  imu_dt);
       att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, att.pitch_rate, imu_dt);
@@ -624,7 +619,7 @@ void IMU_task(void *argument)
       float sin_p = sinf(p_rad), cos_p = cosf(p_rad);
       float sin_r = sinf(r_rad), cos_r = cosf(r_rad);
 
-      float az_world_up = (ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p);
+      float az_world_up = (att.ax * sin_p) + (att.ay * sin_r * cos_p) + (att.az * cos_r * cos_p);
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
