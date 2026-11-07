@@ -655,7 +655,8 @@ void Barometers_task(void *argument)
   outlier_filter_init(&filter_baro_outlier, 0.2f, 10);
   median_filter_init(&filter_baro_median, 7);
   biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
-  altitude_ekf_init(&alt_ekf, 0.5f, 0.01f, 0.40f);
+  // Tang do tin cay vao gia toc (acc_noise=0.20f do da co Biquad LPF 25Hz, baro_noise=0.50f de tranh giat)
+  altitude_ekf_init(&alt_ekf, 0.20f, 0.01f, 0.50f);
 
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
