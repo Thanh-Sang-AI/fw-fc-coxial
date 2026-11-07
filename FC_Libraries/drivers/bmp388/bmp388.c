@@ -166,7 +166,7 @@ bool BMP388_Init(BMP388_t *dev, I2C_HandleTypeDef *hi2c)
 
 	/* 6. Bật bộ lọc IIR phần cứng (Coeff 3 để triệt tiêu gió cánh quạt)
 		  Thanh ghi CONFIG (0x1F): bit [3:1] = 0b010 (Filter coefficient 3) -> 0x04 */
-	uint8_t cfg = 0x08;
+	uint8_t cfg = 0x04;
 	HAL_I2C_Mem_Write(dev->hi2c, dev->i2c_addr, BMP388_REG_CONFIG, I2C_MEMADD_SIZE_8BIT, &cfg, 1, 50);
 
 	/* 7. Kích hoạt Normal Mode (tự động lấy mẫu liên tục ở 50Hz, không cần trigger thủ công)

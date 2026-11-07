@@ -157,6 +157,7 @@ void altitude_ekf_init(altitude_ekf_t *ekf, float acc_noise, float bias_noise, f
     ekf->Q_accel     = acc_noise * acc_noise;
     ekf->Q_bias      = bias_noise * bias_noise;
     ekf->R_baro      = baro_noise * baro_noise;
+    ekf->innov_fail_count = 0;
     ekf->initialized = false;
 }
 
@@ -165,6 +166,7 @@ void altitude_ekf_reset(altitude_ekf_t *ekf, float initial_alt)
     if (ekf == NULL) return;
     ekf->z  = initial_alt;
     ekf->vz = 0.0f;
+    ekf->innov_fail_count = 0;
 
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
@@ -213,11 +215,21 @@ void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt)
     float S = ekf->P[0][0] + ekf->R_baro;
     if (S <= 0.0f) return;
 
-    /* Innovation consistency gate: 3 * sqrt(S) (chuan PX4) */
-    float gate = 3.0f * sqrtf(S);
-    if (gate < 0.5f) gate = 0.5f;
-    if (y > gate)  y = gate;
-    if (y < -gate) y = -gate;
+    /* Innovation consistency gate: 5.0 * sqrt(S) (chuan PX4 EKF2_BARO_GATE = 5.0) */
+    /* Chi tu choi cap nhat neu Baro nhay vot dot ngot qua 5-sigma */
+    float gate = 5.0f * sqrtf(S);
+    if (gate < 1.0f) gate = 1.0f;
+    if (fabsf(y) > gate) {
+        ekf->innov_fail_count++;
+        if (ekf->innov_fail_count < 50) { // 50 mau ~ 1 giay o 50Hz
+            return; // Tu choi cap nhat mau do dot bien
+        } else {
+            // Neu lech qua 1 giay lien tiep, tu dong dong bo lai theo Baro de tranh bi ket
+            altitude_ekf_reset(ekf, baro_alt);
+            return;
+        }
+    }
+    ekf->innov_fail_count = 0;
 
     /* Tinh Kalman Gain */
     float K0 = ekf->P[0][0] / S;

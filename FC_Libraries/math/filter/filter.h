@@ -79,6 +79,7 @@ typedef struct {
     float Q_accel;      // Phuong sai nhieu gia toc
     float Q_bias;       // Phuong sai nhieu bias gia toc
     float R_baro;       // Phuong sai nhieu do luong Baro
+    uint8_t innov_fail_count; // Dem so mau lien tiep that bai Innovation Gate 5-sigma
     bool  initialized;
 } altitude_ekf_t;
 

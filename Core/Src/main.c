@@ -653,10 +653,10 @@ void Barometers_task(void *argument)
 {
   /* USER CODE BEGIN Barometers_task */
   outlier_filter_init(&filter_baro_outlier, 0.2f, 10);
-  median_filter_init(&filter_baro_median, 5);
-  biquad2p_filter_init(&filter_baro, 8.0f, 50.0f);
-  // Tang do tin cay vao gia toc (acc_noise=0.20f do da co Biquad LPF 25Hz, baro_noise=0.50f de tranh giat)
-  altitude_ekf_init(&alt_ekf, 0.20f, 0.01f, 0.50f);
+  median_filter_init(&filter_baro_median, 3);
+  biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
+  // Tham so EKF chuan PX4 (acc_noise=0.35f, bias_noise=0.003f, baro_noise=2.5f)
+  altitude_ekf_init(&alt_ekf, 0.35f, 0.003f, 2.5f);
 
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
@@ -676,11 +676,12 @@ void Barometers_task(void *argument)
       // 1. Loc loai bo nhiễu gai (Outlier Rejection > 0.2m / 20ms)
       float sanitized_alt = outlier_filter_apply(&filter_baro_outlier, baro.altitude_m);
 
-      // 2. Loc trung vi 5 mau (Median Filter)
+      // 2. Loc trung vi 3 mau (Median Filter chuan PX4)
       float median_alt = median_filter_apply(&filter_baro_median, sanitized_alt);
 
-      // 3. Loc thong thap bac 2 tai 10 Hz
-      baro_filtered_alt = biquad2p_filter_apply(&filter_baro, median_alt);
+      // 3. Tam thoi comment bo loc thong thap (Biquad LPF) theo phong cach PX4
+      // baro_filtered_alt = biquad2p_filter_apply(&filter_baro, median_alt);
+      baro_filtered_alt = median_alt;
 
       // 4. Bat co bao cho IMU_task cap nhat EKF
       baro_has_new_data = true;
