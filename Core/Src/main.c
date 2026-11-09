@@ -119,6 +119,22 @@ volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi b
 
 mtf01p_t            opflow;
 
+// Bo loc thong thap bac 2 va Kalman cho MTF-01P (Op_Flo_task @ 100 Hz)
+biquad2p_filter_t   filter_opflow_z;
+biquad2p_filter_t   filter_opflow_vx;
+biquad2p_filter_t   filter_opflow_vy;
+
+kalman_pv_t         kalman_opflow_z;
+kalman_pv_t         kalman_opflow_x;
+kalman_pv_t         kalman_opflow_y;
+
+volatile float      opflow_z          = 0.0f;  // Do cao Z uoc luong (m)
+volatile float      opflow_vz         = 0.0f;  // Van toc leo Vz uoc luong (m/s)
+volatile float      opflow_x          = 0.0f;  // Vi tri ngang X (m)
+volatile float      opflow_y          = 0.0f;  // Vi tri ngang Y (m)
+volatile float      opflow_vx         = 0.0f;  // Van toc ngang Vx (m/s)
+volatile float      opflow_vy         = 0.0f;  // Van toc ngang Vy (m/s)
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -781,10 +797,61 @@ void Barometers_task(void *argument)
 void Op_Flo_task(void *argument)
 {
   /* USER CODE BEGIN Op_Flo_task */
-  /* Infinite loop */
+  // 1. Khoi tao cac bo loc thong thap bac 2 Biquad (Cutoff 15 Hz @ 100 Hz Fs)
+  biquad2p_filter_init(&filter_opflow_z,  15.0f, 100.0f);
+  biquad2p_filter_init(&filter_opflow_vx, 15.0f, 100.0f);
+  biquad2p_filter_init(&filter_opflow_vy, 15.0f, 100.0f);
+
+  // 2. Khoi tao Kalman PV cho Z (do luong position), X va Y (do luong velocity)
+  kalman_pv_init(&kalman_opflow_z, 0.001f, 0.05f, 0.002f);
+  kalman_pv_init(&kalman_opflow_x, 0.001f, 0.1f, 0.02f);
+  kalman_pv_init(&kalman_opflow_y, 0.001f, 0.1f, 0.02f);
+
+  /* Infinite loop @ 100 Hz */
   for(;;)
   {
-    osDelay(100);
+    // 3. Doc raw tu MTF-01P qua bo loc thong thap bac 2
+    float raw_z_m = (float)opflow.raw_distance_cm * 0.01f;
+    float lpf_z   = biquad2p_filter_apply(&filter_opflow_z, raw_z_m);
+
+    // Tinh van toc troi ngang tu Optical Flow: Speed (m/s) = flow_vel * 0.01 * height
+    float raw_vx = 0.0f;
+    float raw_vy = 0.0f;
+    if (opflow.raw_quality > 20 && lpf_z > 0.03f) {
+      raw_vx = (float)opflow.raw_flow_x * 0.01f * lpf_z;
+      raw_vy = (float)opflow.raw_flow_y * 0.01f * lpf_z;
+    }
+    float lpf_vx = biquad2p_filter_apply(&filter_opflow_vx, raw_vx);
+    float lpf_vy = biquad2p_filter_apply(&filter_opflow_vy, raw_vy);
+
+    // 4. Du doan trang thai Kalman (100 Hz -> dt = 0.01s)
+    kalman_pv_predict(&kalman_opflow_z, 0.01f);
+    kalman_pv_predict(&kalman_opflow_x, 0.01f);
+    kalman_pv_predict(&kalman_opflow_y, 0.01f);
+
+    // 5. Cap nhat do luong vao Kalman
+    if (opflow.raw_distance_cm > 0 && opflow.raw_distance_cm < 1200) {
+      kalman_pv_update_pos(&kalman_opflow_z, lpf_z);
+    }
+
+    if (opflow.raw_quality > 20 && lpf_z > 0.03f) {
+      kalman_pv_update_vel(&kalman_opflow_x, lpf_vx);
+      kalman_pv_update_vel(&kalman_opflow_y, lpf_vy);
+    } else {
+      // Khi cam bien de yen tren ban hoac chat luong kem, xa van toc de tranh trôi vi tri
+      kalman_opflow_x.v *= 0.95f;
+      kalman_opflow_y.v *= 0.95f;
+    }
+
+    // 6. Xuat ket qua z, vz, x, y, vx, vy
+    opflow_z  = kalman_opflow_z.p;
+    opflow_vz = kalman_opflow_z.v;
+    opflow_x  = kalman_opflow_x.p;
+    opflow_vx = kalman_opflow_x.v;
+    opflow_y  = kalman_opflow_y.p;
+    opflow_vy = kalman_opflow_y.v;
+
+    osDelay(10); // 100 Hz
   }
   /* USER CODE END Op_Flo_task */
 }

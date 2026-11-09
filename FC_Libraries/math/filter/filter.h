@@ -103,6 +103,28 @@ void  outlier_filter_init(outlier_filter_t *f, float max_delta, uint8_t max_cons
 void  outlier_filter_reset(outlier_filter_t *f, float initial_val);
 float outlier_filter_apply(outlier_filter_t *f, float input);
 
+/* =========================================================================
+   6. 2-State Linear Kalman Filter for Position & Velocity (P-V)
+   Trang thai: [Position p (m), Velocity v (m/s)]
+   - Cap nhat vi tri (update_pos): Dung cho ToF / LiDAR do do cao Z -> ra z, vz
+   - Cap nhat van toc (update_vel): Dung cho Optical Flow do van toc -> ra x, vx, y, vy
+   ========================================================================= */
+typedef struct {
+    float p;            // Vi tri uoc luong (m)
+    float v;            // Van toc uoc luong (m/s)
+    float P[2][2];      // Ma tran hiep phuong sai sai so
+    float Q_pos;        // Phuong sai nhieu qua trinh vi tri
+    float Q_vel;        // Phuong sai nhieu qua trinh van toc
+    float R;            // Phuong sai nhieu do luong
+    bool  initialized;
+} kalman_pv_t;
+
+void  kalman_pv_init(kalman_pv_t *k, float q_pos, float q_vel, float r);
+void  kalman_pv_reset(kalman_pv_t *k, float p, float v);
+void  kalman_pv_predict(kalman_pv_t *k, float dt);
+void  kalman_pv_update_pos(kalman_pv_t *k, float pos_meas);
+void  kalman_pv_update_vel(kalman_pv_t *k, float vel_meas);
+
 #ifdef __cplusplus
 }
 #endif

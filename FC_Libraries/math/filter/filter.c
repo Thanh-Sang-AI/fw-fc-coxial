@@ -310,3 +310,99 @@ float outlier_filter_apply(outlier_filter_t *f, float input)
     f->last_valid = input;
     return input;
 }
+
+/* =========================================================================
+   6. 2-State Linear Kalman Filter for Position & Velocity (P-V)
+   ========================================================================= */
+void kalman_pv_init(kalman_pv_t *k, float q_pos, float q_vel, float r)
+{
+    if (k == NULL) return;
+    *k = (kalman_pv_t){
+        .Q_pos = q_pos,
+        .Q_vel = q_vel,
+        .R = r,
+        .P = {{1.0f, 0.0f}, {0.0f, 1.0f}},
+        .initialized = false
+    };
+}
+
+void kalman_pv_reset(kalman_pv_t *k, float p, float v)
+{
+    if (k == NULL) return;
+    k->p = p;
+    k->v = v;
+    k->P[0][0] = 1.0f; k->P[0][1] = 0.0f;
+    k->P[1][0] = 0.0f; k->P[1][1] = 1.0f;
+    k->initialized = true;
+}
+
+void kalman_pv_predict(kalman_pv_t *k, float dt)
+{
+    if (k == NULL || !k->initialized) return;
+
+    // x = F * x
+    k->p += k->v * dt;
+
+    // P = F * P * F^T + Q
+    float p00 = k->P[0][0] + dt * (k->P[0][1] + k->P[1][0]) + (dt * dt) * k->P[1][1] + k->Q_pos;
+    float p01 = k->P[0][1] + dt * k->P[1][1];
+    float p10 = k->P[1][0] + dt * k->P[1][1];
+    float p11 = k->P[1][1] + k->Q_vel;
+
+    k->P[0][0] = p00;
+    k->P[0][1] = p01;
+    k->P[1][0] = p10;
+    k->P[1][1] = p11;
+}
+
+void kalman_pv_update_pos(kalman_pv_t *k, float pos_meas)
+{
+    if (k == NULL) return;
+    if (!k->initialized) {
+        kalman_pv_reset(k, pos_meas, 0.0f);
+        return;
+    }
+
+    // y = z - H * x  (H = [1, 0])
+    float y = pos_meas - k->p;
+    float S = k->P[0][0] + k->R;
+    if (S < 1e-6f) return;
+
+    float K0 = k->P[0][0] / S;
+    float K1 = k->P[1][0] / S;
+
+    k->p += K0 * y;
+    k->v += K1 * y;
+
+    float p00 = k->P[0][0], p01 = k->P[0][1];
+    k->P[0][0] -= K0 * p00;
+    k->P[0][1] -= K0 * p01;
+    k->P[1][0] -= K1 * p00;
+    k->P[1][1] -= K1 * p01;
+}
+
+void kalman_pv_update_vel(kalman_pv_t *k, float vel_meas)
+{
+    if (k == NULL) return;
+    if (!k->initialized) {
+        kalman_pv_reset(k, 0.0f, vel_meas);
+        return;
+    }
+
+    // y = z - H * x  (H = [0, 1])
+    float y = vel_meas - k->v;
+    float S = k->P[1][1] + k->R;
+    if (S < 1e-6f) return;
+
+    float K0 = k->P[0][1] / S;
+    float K1 = k->P[1][1] / S;
+
+    k->p += K0 * y;
+    k->v += K1 * y;
+
+    float p10 = k->P[1][0], p11 = k->P[1][1];
+    k->P[0][0] -= K0 * p10;
+    k->P[0][1] -= K0 * p11;
+    k->P[1][0] -= K1 * p10;
+    k->P[1][1] -= K1 * p11;
+}
