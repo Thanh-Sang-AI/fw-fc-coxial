@@ -107,6 +107,8 @@ volatile float      ned_z             = 0.0f;  // Vi tri NED Z (m): am khi bay l
 volatile float      ned_vz            = 0.0f;  // Van toc NED Vz (m/s): am khi bay len
 volatile float      estimated_alt     = 0.0f;  // Do cao thuc te (m): duong khi bay len
 volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi bay len
+volatile float      accel_noise_sigma = 0.0f;  // Do lech chuan nhieu gia toc do duoc luc khoi dong (m/s^2)
+volatile float      accel_deadband    = 0.0f;  // Nguong deadband thong ke (3 * sigma)
 volatile bool       reset_imu_alt     = false; // Set true trong Live Watch de reset do cao ve 0 khi test IMU
 
 /* USER CODE END PV */
@@ -581,6 +583,7 @@ void IMU_task(void *argument)
   altitude_ekf_init(&alt_ekf, 0.35f, 0.003f, 2.5f);
   altitude_ekf_reset(&alt_ekf, 0.0f);
 
+  float tare_buf[200];
   float az_tare_sum = 0.0f;
   const int tare_samples = 200;
   for (int i = 0; i < tare_samples; i++) {
@@ -598,10 +601,21 @@ void IMU_task(void *argument)
     float r_rad = att.roll  * 0.0174532925f;
     float p_rad = att.pitch * 0.0174532925f;
     float az_world_up = (att.ax * sinf(p_rad)) + (att.ay * sinf(r_rad) * cosf(p_rad)) + (att.az * cosf(r_rad) * cosf(p_rad));
-    az_tare_sum += (1.0f - az_world_up) * 9.80665f;
+    float val = (1.0f - az_world_up) * 9.80665f;
+    tare_buf[i] = val;
+    az_tare_sum += val;
     vTaskDelay(2);
   }
   alt_ekf.accel_bias = az_tare_sum / (float)tare_samples;
+
+  // Do phuong sai thuc te va dat deadband khoa hoc theo quy tac 3-sigma (99.73% confidence)
+  float var_sum = 0.0f;
+  for (int i = 0; i < tare_samples; i++) {
+    float diff = tare_buf[i] - alt_ekf.accel_bias;
+    var_sum += diff * diff;
+  }
+  accel_noise_sigma = sqrtf(var_sum / (float)tare_samples);
+  accel_deadband    = 3.0f * accel_noise_sigma; // 3 * sigma
 
   uint32_t last_cycle = DWT->CYCCNT;
 
@@ -648,9 +662,9 @@ void IMU_task(void *argument)
       float az_world_up = (att.ax * sin_p) + (att.ay * sin_r * cos_p) + (att.az * cos_r * cos_p);
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
-      // Loc bo nhiễu nho (Deadband): Neu gia toc qua nho thi bo qua, khong tich phan
+      // Loc bo nhiễu nho bang nguong Deadband thong ke (3-sigma: 99.73% nhieu trang bi triet tieu)
       float raw_acc_z = az_ned_mps2 - alt_ekf.accel_bias;
-      if (fabsf(raw_acc_z) < 0.08f) { // Duoi ~8mg (~0.08 m/s^2) coi nhu nhieu trang cua chip, bo qua
+      if (fabsf(raw_acc_z) < accel_deadband) {
         az_ned_mps2 = alt_ekf.accel_bias;
       }
 
