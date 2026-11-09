@@ -21,21 +21,13 @@ typedef struct {
     uint8_t   payload_len;
 
     // Du lieu raw doc truc tiep tu cam bien
-    volatile uint8_t  last_msg_id;     /* 132: DISTANCE_SENSOR, 100: OPTICAL_FLOW, 0: HEARTBEAT */
+    volatile uint8_t  last_msg_id;     /* 132: DISTANCE_SENSOR, 106: OPTICAL_FLOW_RAD, 100: OPTICAL_FLOW */
     volatile uint16_t raw_distance_cm; /* Khoang cach ToF toi mat dat (cm) */
-    volatile int16_t  raw_flow_x;      /* Van toc dong quang truc X (raw) */
-    volatile int16_t  raw_flow_y;      /* Van toc dong quang truc Y (raw) */
+    volatile float    raw_flow_x;      /* Toc do dong quang truc X (rad/s) */
+    volatile float    raw_flow_y;      /* Toc do dong quang truc Y (rad/s) */
     volatile uint8_t  raw_quality;     /* Chat luong anh quang hoc (0-255) */
     volatile uint32_t last_update_ms;  /* Thoi diem nhan goi tin gan nhat */
     volatile uint32_t frame_count;     /* Tong so frame hop le nhan duoc */
-
-    // Du lieu uoc luong trang thai sau loc va Kalman (100 Hz)
-    volatile float    z;               /* Do cao Z uoc luong (m) */
-    volatile float    vz;              /* Van toc leo Vz uoc luong (m/s) */
-    volatile float    x;               /* Vi tri ngang X (m) */
-    volatile float    y;               /* Vi tri ngang Y (m) */
-    volatile float    vx;              /* Van toc ngang Vx (m/s) */
-    volatile float    vy;              /* Van toc ngang Vy (m/s) */
 } mtf01p_t;
 
 /* =========================================================================

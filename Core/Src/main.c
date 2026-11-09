@@ -128,6 +128,9 @@ kalman_pv_t         kalman_opflow_z;
 kalman_pv_t         kalman_opflow_x;
 kalman_pv_t         kalman_opflow_y;
 
+// Struct duy nhat de xem tren Live Watch: x, y, z (m) va vx, vy, vz (m/s)
+volatile pos_vel_t  pos_vel = {0};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -807,12 +810,12 @@ void Op_Flo_task(void *argument)
     float raw_z_m = (float)opflow.raw_distance_cm * 0.01f;
     float lpf_z   = biquad2p_filter_apply(&filter_opflow_z, raw_z_m);
 
-    // Tinh van toc troi ngang tu Optical Flow: Speed (m/s) = flow_vel * 0.01 * height
+    // Tinh van toc troi ngang: v (m/s) = flow_rate (rad/s) * height (m)
     float raw_vx = 0.0f;
     float raw_vy = 0.0f;
-    if (opflow.raw_quality > 20 && lpf_z > 0.03f) {
-      raw_vx = (float)opflow.raw_flow_x * 0.01f * lpf_z;
-      raw_vy = (float)opflow.raw_flow_y * 0.01f * lpf_z;
+    if (opflow.raw_quality > 15 && lpf_z > 0.02f) {
+      raw_vx = opflow.raw_flow_x * lpf_z;
+      raw_vy = opflow.raw_flow_y * lpf_z;
     }
     float lpf_vx = biquad2p_filter_apply(&filter_opflow_vx, raw_vx);
     float lpf_vy = biquad2p_filter_apply(&filter_opflow_vy, raw_vy);
@@ -827,22 +830,22 @@ void Op_Flo_task(void *argument)
       kalman_pv_update_pos(&kalman_opflow_z, lpf_z);
     }
 
-    if (opflow.raw_quality > 20 && lpf_z > 0.03f) {
+    if (opflow.raw_quality > 15 && lpf_z > 0.02f) {
       kalman_pv_update_vel(&kalman_opflow_x, lpf_vx);
       kalman_pv_update_vel(&kalman_opflow_y, lpf_vy);
     } else {
-      // Khi cam bien de yen tren ban hoac chat luong kem, xa van toc de tranh trôi vi tri
+      // Khi cam bien de yen tren ban hoac chat luong kem, xa van toc de tranh troi vi tri
       kalman_opflow_x.v *= 0.95f;
       kalman_opflow_y.v *= 0.95f;
     }
 
-    // 6. Xuat ket qua z, vz, x, y, vx, vy truc tiep vao struct opflow
-    opflow.z  = kalman_opflow_z.p;
-    opflow.vz = kalman_opflow_z.v;
-    opflow.x  = kalman_opflow_x.p;
-    opflow.vx = kalman_opflow_x.v;
-    opflow.y  = kalman_opflow_y.p;
-    opflow.vy = kalman_opflow_y.v;
+    // 6. Xuat ket qua duy nhat vao struct pos_vel de xem tren Live Watch
+    pos_vel.x  = kalman_opflow_x.p;
+    pos_vel.y  = kalman_opflow_y.p;
+    pos_vel.z  = kalman_opflow_z.p;
+    pos_vel.vx = kalman_opflow_x.v;
+    pos_vel.vy = kalman_opflow_y.v;
+    pos_vel.vz = kalman_opflow_z.v;
 
     vTaskDelay(10); // 100 Hz
   }

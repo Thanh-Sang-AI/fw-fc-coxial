@@ -47,6 +47,15 @@ typedef struct {
     float az;          // Gia toc than truc Z sau loc (g)
 } attitude_t;
 
+typedef struct {
+    float x;           // Vi tri ngang X (m)
+    float y;           // Vi tri ngang Y (m)
+    float z;           // Do cao Z (m)
+    float vx;          // Van toc ngang Vx (m/s)
+    float vy;          // Van toc ngang Vy (m/s)
+    float vz;          // Van toc leo Vz (m/s)
+} pos_vel_t;
+
 /* =========================================================================
    3. Median Filter (Co the cau hinh kich thuoc cua so: 3, 5, 9... mau)
    ========================================================================= */
