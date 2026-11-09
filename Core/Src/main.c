@@ -107,6 +107,8 @@ volatile float      ned_z             = 0.0f;  // Vi tri NED Z (m): am khi bay l
 volatile float      ned_vz            = 0.0f;  // Van toc NED Vz (m/s): am khi bay len
 volatile float      estimated_alt     = 0.0f;  // Do cao thuc te (m): duong khi bay len
 volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi bay len
+volatile float      accel_noise_sigma = 0.0f;  // Do lech chuan nhieu gia toc (m/s^2)
+volatile float      accel_deadband    = 0.0f;  // Nguong deadband 2-sigma (m/s^2)
 
 /* USER CODE END PV */
 
@@ -576,6 +578,43 @@ void IMU_task(void *argument)
   kalman_angle_init(&kalman_pitch, 0.0015f, 0.003f, 0.03f);
   icm45686_calibrate_gyro(&imu, gyro_bias);
 
+  // Khoi tao EKF va do 2-sigma nhieu gia toc online bang thuat toan Welford
+  altitude_ekf_init(&alt_ekf, 0.35f, 0.003f, 2.5f);
+  altitude_ekf_reset(&alt_ekf, 0.0f);
+
+  float mean = 0.0f;
+  float M2   = 0.0f;
+  const int tare_samples = 200;
+
+  for (int i = 1; i <= tare_samples; i++) {
+    icm45686_read(&imu);
+    float ax_raw = -imu.accel_g[1];
+    float ay_raw = -imu.accel_g[0];
+    float az_raw = -imu.accel_g[2];
+    att.ax = biquad2p_filter_apply(&filter_accel[0], ax_raw);
+    att.ay = biquad2p_filter_apply(&filter_accel[1], ay_raw);
+    att.az = biquad2p_filter_apply(&filter_accel[2], az_raw);
+    float acc_roll  = atan2f(att.ay, att.az) * 57.29578f;
+    float acc_pitch = atan2f(att.ax, sqrtf(att.ay * att.ay + att.az * att.az)) * 57.29578f;
+    att.roll  = kalman_angle_update(&kalman_roll,  acc_roll,  0.0f, 0.002f);
+    att.pitch = kalman_angle_update(&kalman_pitch, acc_pitch, 0.0f, 0.002f);
+    float r_rad = att.roll  * 0.0174532925f;
+    float p_rad = att.pitch * 0.0174532925f;
+    float az_world_up = (att.ax * sinf(p_rad)) + (att.ay * sinf(r_rad) * cosf(p_rad)) + (att.az * cosf(r_rad) * cosf(p_rad));
+    float val = (1.0f - az_world_up) * 9.80665f;
+
+    float delta = val - mean;
+    mean += delta / (float)i;
+    float delta2 = val - mean;
+    M2 += delta * delta2;
+
+    vTaskDelay(2);
+  }
+
+  alt_ekf.accel_bias = mean;
+  accel_noise_sigma  = sqrtf(M2 / (float)tare_samples);
+  accel_deadband     = 2.0f * accel_noise_sigma; // 2-sigma (~95.45% confidence)
+
   uint32_t last_cycle = DWT->CYCCNT;
 
   for(;;)
@@ -621,6 +660,14 @@ void IMU_task(void *argument)
       float az_world_up = (att.ax * sin_p) + (att.ay * sin_r * cos_p) + (att.az * cos_r * cos_p);
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
+      // Loc bo nhieu duoi 2-sigma va xa van toc 99% truoc khi du doan EKF
+      float raw_acc_z = az_ned_mps2 - alt_ekf.accel_bias;
+      if (fabsf(raw_acc_z) < accel_deadband) {
+        az_ned_mps2 = alt_ekf.accel_bias;
+        alt_ekf.vz *= 0.99f; // Xa van toc 99% (giam 1% moi chu ky 2ms khi dung yen)
+        if (fabsf(alt_ekf.vz) < 0.001f) alt_ekf.vz = 0.0f;
+      }
+
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
 
       // 5. Chi cap nhat EKF tu Baro khi co mau moi (nhip 50 Hz, moi ~10 chu ky IMU)
@@ -653,8 +700,7 @@ void Barometers_task(void *argument)
   /* USER CODE BEGIN Barometers_task */
   median_filter_init(&filter_baro_median, 3);
   biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
-  // Tham so EKF chuan PX4 (acc_noise=0.35f, bias_noise=0.003f, baro_noise=2.5f)
-  altitude_ekf_init(&alt_ekf, 0.35f, 0.003f, 2.5f);
+  // altitude_ekf_init da duoc khoi tao trong IMU_task de giu bias tare
 
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
