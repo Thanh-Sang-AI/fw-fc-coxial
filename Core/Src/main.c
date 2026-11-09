@@ -128,13 +128,6 @@ kalman_pv_t         kalman_opflow_z;
 kalman_pv_t         kalman_opflow_x;
 kalman_pv_t         kalman_opflow_y;
 
-volatile float      opflow_z          = 0.0f;  // Do cao Z uoc luong (m)
-volatile float      opflow_vz         = 0.0f;  // Van toc leo Vz uoc luong (m/s)
-volatile float      opflow_x          = 0.0f;  // Vi tri ngang X (m)
-volatile float      opflow_y          = 0.0f;  // Vi tri ngang Y (m)
-volatile float      opflow_vx         = 0.0f;  // Van toc ngang Vx (m/s)
-volatile float      opflow_vy         = 0.0f;  // Van toc ngang Vy (m/s)
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -843,15 +836,15 @@ void Op_Flo_task(void *argument)
       kalman_opflow_y.v *= 0.95f;
     }
 
-    // 6. Xuat ket qua z, vz, x, y, vx, vy
-    opflow_z  = kalman_opflow_z.p;
-    opflow_vz = kalman_opflow_z.v;
-    opflow_x  = kalman_opflow_x.p;
-    opflow_vx = kalman_opflow_x.v;
-    opflow_y  = kalman_opflow_y.p;
-    opflow_vy = kalman_opflow_y.v;
+    // 6. Xuat ket qua z, vz, x, y, vx, vy truc tiep vao struct opflow
+    opflow.z  = kalman_opflow_z.p;
+    opflow.vz = kalman_opflow_z.v;
+    opflow.x  = kalman_opflow_x.p;
+    opflow.vx = kalman_opflow_x.v;
+    opflow.y  = kalman_opflow_y.p;
+    opflow.vy = kalman_opflow_y.v;
 
-    osDelay(10); // 100 Hz
+    vTaskDelay(10); // 100 Hz
   }
   /* USER CODE END Op_Flo_task */
 }

@@ -20,14 +20,22 @@ typedef struct {
     uint8_t   idx;
     uint8_t   payload_len;
 
-    // Dữ liệu raw đọc trực tiếp từ cảm biến
+    // Du lieu raw doc truc tiep tu cam bien
     volatile uint8_t  last_msg_id;     /* 132: DISTANCE_SENSOR, 100: OPTICAL_FLOW, 0: HEARTBEAT */
-    volatile uint16_t raw_distance_cm; /* Khoảng cách ToF tới mặt đất (cm) */
-    volatile int16_t  raw_flow_x;      /* Vận tốc dòng quang trục X (raw) */
-    volatile int16_t  raw_flow_y;      /* Vận tốc dòng quang trục Y (raw) */
-    volatile uint8_t  raw_quality;     /* Chất lượng ảnh quang học (0-255) */
-    volatile uint32_t last_update_ms;  /* Thời điểm nhận gói tin gần nhất */
-    volatile uint32_t frame_count;     /* Tổng số frame hợp lệ nhận được */
+    volatile uint16_t raw_distance_cm; /* Khoang cach ToF toi mat dat (cm) */
+    volatile int16_t  raw_flow_x;      /* Van toc dong quang truc X (raw) */
+    volatile int16_t  raw_flow_y;      /* Van toc dong quang truc Y (raw) */
+    volatile uint8_t  raw_quality;     /* Chat luong anh quang hoc (0-255) */
+    volatile uint32_t last_update_ms;  /* Thoi diem nhan goi tin gan nhat */
+    volatile uint32_t frame_count;     /* Tong so frame hop le nhan duoc */
+
+    // Du lieu uoc luong trang thai sau loc va Kalman (100 Hz)
+    volatile float    z;               /* Do cao Z uoc luong (m) */
+    volatile float    vz;              /* Van toc leo Vz uoc luong (m/s) */
+    volatile float    x;               /* Vi tri ngang X (m) */
+    volatile float    y;               /* Vi tri ngang Y (m) */
+    volatile float    vx;              /* Van toc ngang Vx (m/s) */
+    volatile float    vy;              /* Van toc ngang Vy (m/s) */
 } mtf01p_t;
 
 /* =========================================================================
