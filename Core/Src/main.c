@@ -64,7 +64,7 @@ const osThreadAttr_t Led_Blink_attributes = {
 osThreadId_t IMU_TaskHandle;
 const osThreadAttr_t IMU_Task_attributes = {
   .name = "IMU_Task",
-  .stack_size = 512 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityRealtime1,
 };
 /* Definitions for Barometers_Task */
