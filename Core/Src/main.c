@@ -652,15 +652,15 @@ void IMU_task(void *argument)
       float gyro_motion = fabsf(att.roll_rate) + fabsf(att.pitch_rate) + fabsf(att.yaw_rate);
       float raw_acc_z   = az_ned_mps2 - alt_ekf.accel_bias;
 
-      if ((gyro_motion < 2.0f) && (fabsf(raw_acc_z) < 0.20f)) {
-        // Bo mach dung yen: Triet tieu van toc troi ve 0 va tu dong hoc bias gia toc
-        alt_ekf.vz *= 0.85f;
-        if (fabsf(alt_ekf.vz) < 0.005f) alt_ekf.vz = 0.0f;
-        alt_ekf.accel_bias += 0.005f * raw_acc_z;
-        az_ned_mps2 = alt_ekf.accel_bias; // a = 0 tuyet doi khi dung yen
+      if ((gyro_motion < 3.0f) && (fabsf(raw_acc_z) < 0.80f)) {
+        // Bo mach dung yen tren ban: Triet tieu van toc ve 0 va tu dong hoc bias gia toc
+        alt_ekf.vz = 0.0f;
+        alt_ekf.accel_bias += 0.01f * raw_acc_z; // Hoc bias theo nhiet do va do nghieng ban
+        az_ned_mps2 = alt_ekf.accel_bias;        // Khoa gia toc ve 0 tuyet doi
       } else {
-        // Co chuyen dong thuc: Loc bo nhiễu trang nho duoi 0.04 m/s^2 (~4mg)
-        if (fabsf(raw_acc_z) < 0.04f) {
+        // Co chuyen dong thuc: Giam ro ri van toc nhe de tranh runaway khi giu tren tay
+        alt_ekf.vz *= 0.998f;
+        if (fabsf(raw_acc_z) < 0.05f) {
           az_ned_mps2 = alt_ekf.accel_bias;
         }
       }
@@ -702,8 +702,7 @@ void Barometers_task(void *argument)
   /* USER CODE BEGIN Barometers_task */
   median_filter_init(&filter_baro_median, 3);
   biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
-  // Tham so EKF chuan PX4 (acc_noise=0.35f, bias_noise=0.003f, baro_noise=2.5f)
-  altitude_ekf_init(&alt_ekf, 0.35f, 0.003f, 2.5f);
+  // altitude_ekf_init da duoc khoi tao trong IMU_task, khong goi o day de tranh reset mat bias tare
 
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
