@@ -615,7 +615,8 @@ void IMU_task(void *argument)
 
   alt_ekf.accel_bias = mean;
   accel_noise_sigma  = sqrtf(M2 / (float)tare_samples);
-  accel_deadband     = 3.0f * accel_noise_sigma; // 3-sigma (99.73% confidence)
+  accel_deadband     = 2.0f * accel_noise_sigma; // 2-sigma
+  if (accel_deadband > 0.04f) accel_deadband = 0.04f; // Gioi han toi da 4mg de khong nuot mat luc nhe
 
   uint32_t last_cycle = DWT->CYCCNT;
 
@@ -662,10 +663,13 @@ void IMU_task(void *argument)
       float az_world_up = (att.ax * sin_p) + (att.ay * sin_r * cos_p) + (att.az * cos_r * cos_p);
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
-      // Loc bo nhiễu nho bang nguong Deadband thong ke (3-sigma: 99.73% nhieu trang bi triet tieu)
+      // Loc bo nhiễu nho bang nguong Deadband thong ke
       float raw_acc_z = az_ned_mps2 - alt_ekf.accel_bias;
       if (fabsf(raw_acc_z) < accel_deadband) {
         az_ned_mps2 = alt_ekf.accel_bias;
+        // Khi gia toc roi vao vung nhieu, keo van toc ton du ve 0 (tranh bi ket/treo vz tren ban)
+        alt_ekf.vz *= 0.95f;
+        if (fabsf(alt_ekf.vz) < 0.002f) alt_ekf.vz = 0.0f;
       }
 
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
