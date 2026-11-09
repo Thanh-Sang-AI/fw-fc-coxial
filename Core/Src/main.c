@@ -117,7 +117,12 @@ volatile float      estimated_alt     = 0.0f;  // Do cao thuc te (m): duong khi 
 volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi bay len
 
 volatile uint8_t opflow_rx_byte     = 0;
-volatile uint8_t opflow_mavlink_ver = 0; // 1: MAVLink v1 (0xFE), 2: MAVLink v2 (0xFD)
+volatile uint8_t  opflow_mavlink_ver = 1; // MAVLink v1
+volatile uint8_t  opflow_last_msg_id = 0; // Message ID gan nhat (vd: 132=ToF, 100=Flow, 0=Heartbeat)
+volatile uint16_t opflow_distance_cm = 0; // Khoang cach ToF mat dat (cm)
+volatile int16_t  opflow_x           = 0; // Dòng quang X
+volatile int16_t  opflow_y           = 0; // Dòng quang Y
+volatile uint8_t  opflow_quality     = 0; // Chat luong anh (0-255)
 
 /* USER CODE END PV */
 
@@ -584,8 +589,31 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	}
 	else if (huart->Instance == UART5)
 	{
-		if (opflow_rx_byte == 0xFD) opflow_mavlink_ver = 2;
-		else if (opflow_rx_byte == 0xFE) opflow_mavlink_ver = 1;
+		static uint8_t  v1_buf[64];
+		static uint8_t  v1_idx = 0;
+		static uint8_t  v1_len = 0;
+
+		if (v1_idx == 0) {
+			if (opflow_rx_byte == 0xFE) { // MAVLink v1 Header
+				v1_buf[v1_idx++] = opflow_rx_byte;
+			}
+		} else {
+			v1_buf[v1_idx++] = opflow_rx_byte;
+			if (v1_idx == 2) v1_len = opflow_rx_byte;
+
+			if (v1_idx >= (v1_len + 8) || v1_idx >= sizeof(v1_buf)) {
+				opflow_last_msg_id = v1_buf[5]; // Byte 5 la Message ID
+
+				if (opflow_last_msg_id == 132 && v1_len >= 10) { // DISTANCE_SENSOR
+					opflow_distance_cm = (uint16_t)(v1_buf[14] | (v1_buf[15] << 8));
+				} else if (opflow_last_msg_id == 100 && v1_len >= 26) { // OPTICAL_FLOW
+					opflow_x       = (int16_t)(v1_buf[26] | (v1_buf[27] << 8));
+					opflow_y       = (int16_t)(v1_buf[28] | (v1_buf[29] << 8));
+					opflow_quality = v1_buf[31];
+				}
+				v1_idx = 0;
+			}
+		}
 
 		HAL_UART_Receive_IT(&huart5, (uint8_t *)&opflow_rx_byte, 1);
 	}
