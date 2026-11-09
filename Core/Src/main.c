@@ -64,7 +64,7 @@ const osThreadAttr_t Led_Blink_attributes = {
 osThreadId_t IMU_TaskHandle;
 const osThreadAttr_t IMU_Task_attributes = {
   .name = "IMU_Task",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityRealtime1,
 };
 /* Definitions for Barometers_Task */
@@ -583,10 +583,12 @@ void IMU_task(void *argument)
   altitude_ekf_init(&alt_ekf, 0.35f, 0.003f, 2.5f);
   altitude_ekf_reset(&alt_ekf, 0.0f);
 
-  float tare_buf[200];
-  float az_tare_sum = 0.0f;
+  // Welford's algorithm: do mean va variance online, khong dung mang nho (tranh tran stack FreeRTOS)
+  float mean = 0.0f;
+  float M2   = 0.0f;
   const int tare_samples = 200;
-  for (int i = 0; i < tare_samples; i++) {
+
+  for (int i = 1; i <= tare_samples; i++) {
     icm45686_read(&imu);
     float ax_raw = -imu.accel_g[1];
     float ay_raw = -imu.accel_g[0];
@@ -602,20 +604,18 @@ void IMU_task(void *argument)
     float p_rad = att.pitch * 0.0174532925f;
     float az_world_up = (att.ax * sinf(p_rad)) + (att.ay * sinf(r_rad) * cosf(p_rad)) + (att.az * cosf(r_rad) * cosf(p_rad));
     float val = (1.0f - az_world_up) * 9.80665f;
-    tare_buf[i] = val;
-    az_tare_sum += val;
+
+    float delta = val - mean;
+    mean += delta / (float)i;
+    float delta2 = val - mean;
+    M2 += delta * delta2;
+
     vTaskDelay(2);
   }
-  alt_ekf.accel_bias = az_tare_sum / (float)tare_samples;
 
-  // Do phuong sai thuc te va dat deadband khoa hoc theo quy tac 3-sigma (99.73% confidence)
-  float var_sum = 0.0f;
-  for (int i = 0; i < tare_samples; i++) {
-    float diff = tare_buf[i] - alt_ekf.accel_bias;
-    var_sum += diff * diff;
-  }
-  accel_noise_sigma = sqrtf(var_sum / (float)tare_samples);
-  accel_deadband    = 3.0f * accel_noise_sigma; // 3 * sigma
+  alt_ekf.accel_bias = mean;
+  accel_noise_sigma  = sqrtf(M2 / (float)tare_samples);
+  accel_deadband     = 3.0f * accel_noise_sigma; // 3-sigma (99.73% confidence)
 
   uint32_t last_cycle = DWT->CYCCNT;
 
