@@ -107,8 +107,11 @@ volatile float      ned_z             = 0.0f;  // Vi tri NED Z (m): am khi bay l
 volatile float      ned_vz            = 0.0f;  // Van toc NED Vz (m/s): am khi bay len
 volatile float      estimated_alt     = 0.0f;  // Do cao thuc te (m): duong khi bay len
 volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi bay len
-volatile float      accel_noise_sigma = 0.0f;  // Do lech chuan nhieu gia toc (m/s^2)
-volatile float      accel_deadband    = 0.0f;  // Nguong deadband 2-sigma (m/s^2)
+// Thong ke RMS va Phuong sai sau Fusion (cap nhat moi 2 giay de xem tren Live Watch)
+volatile float      stat_alt_var      = 0.0f;  // Phuong sai do cao (m^2)
+volatile float      stat_alt_rms      = 0.0f;  // RMS do cao (m)
+volatile float      stat_vz_var       = 0.0f;  // Phuong sai van toc leo (m/s)^2
+volatile float      stat_vz_rms       = 0.0f;  // RMS van toc leo (m/s)
 
 /* USER CODE END PV */
 
@@ -644,6 +647,34 @@ void IMU_task(void *argument)
       ned_vz        = alt_ekf.vz;
       estimated_alt = -alt_ekf.z;
       estimated_vz  = -alt_ekf.vz;
+
+      // 7. Tinh toan thong ke RMS va Phuong sai tren cua so 2 giay (1000 mau @ 500Hz)
+      static float sum_alt = 0.0f, sum_alt_sq = 0.0f;
+      static float sum_vz  = 0.0f, sum_vz_sq  = 0.0f;
+      static uint16_t stat_cnt = 0;
+
+      sum_alt    += estimated_alt;
+      sum_alt_sq += estimated_alt * estimated_alt;
+      sum_vz     += estimated_vz;
+      sum_vz_sq  += estimated_vz * estimated_vz;
+      stat_cnt++;
+
+      if (stat_cnt >= 1000) {
+        float inv_n = 1.0f / 1000.0f;
+        float m_alt = sum_alt * inv_n;
+        float m_vz  = sum_vz  * inv_n;
+
+        float var_alt = (sum_alt_sq * inv_n) - (m_alt * m_alt);
+        float var_vz  = (sum_vz_sq  * inv_n) - (m_vz  * m_vz);
+
+        stat_alt_var = (var_alt > 0.0f) ? var_alt : 0.0f;
+        stat_alt_rms = sqrtf(sum_alt_sq * inv_n);
+        stat_vz_var  = (var_vz  > 0.0f) ? var_vz  : 0.0f;
+        stat_vz_rms  = sqrtf(sum_vz_sq * inv_n);
+
+        sum_alt = sum_alt_sq = sum_vz = sum_vz_sq = 0.0f;
+        stat_cnt = 0;
+      }
     }
 
     vTaskDelay(2);
