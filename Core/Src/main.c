@@ -648,6 +648,23 @@ void IMU_task(void *argument)
       float az_world_up = (att.ax * sin_p) + (att.ay * sin_r * cos_p) + (att.az * cos_r * cos_p);
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
+      // Phat hien dung yen (ZUPT) de triet tieu troi (drift) gia toc va van toc khi khong chuyen dong
+      float gyro_motion = fabsf(att.roll_rate) + fabsf(att.pitch_rate) + fabsf(att.yaw_rate);
+      float raw_acc_z   = az_ned_mps2 - alt_ekf.accel_bias;
+
+      if ((gyro_motion < 2.0f) && (fabsf(raw_acc_z) < 0.20f)) {
+        // Bo mach dung yen: Triet tieu van toc troi ve 0 va tu dong hoc bias gia toc
+        alt_ekf.vz *= 0.85f;
+        if (fabsf(alt_ekf.vz) < 0.005f) alt_ekf.vz = 0.0f;
+        alt_ekf.accel_bias += 0.005f * raw_acc_z;
+        az_ned_mps2 = alt_ekf.accel_bias; // a = 0 tuyet doi khi dung yen
+      } else {
+        // Co chuyen dong thuc: Loc bo nhiễu trang nho duoi 0.04 m/s^2 (~4mg)
+        if (fabsf(raw_acc_z) < 0.04f) {
+          az_ned_mps2 = alt_ekf.accel_bias;
+        }
+      }
+
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
 
       // 5. Chi cap nhat EKF tu Baro khi co mau moi (Tam tat de test rieng do cao bang IMU)
