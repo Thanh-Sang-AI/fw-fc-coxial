@@ -615,7 +615,7 @@ void IMU_task(void *argument)
 
   alt_ekf.accel_bias = mean;
   accel_noise_sigma  = sqrtf(M2 / (float)tare_samples);
-  accel_deadband     = 2.5f * accel_noise_sigma; // 2.5-sigma (~98.76% confidence)
+  accel_deadband     = 2.2f * accel_noise_sigma; // 2.2-sigma (~97.2% confidence)
 
   uint32_t last_cycle = DWT->CYCCNT;
 
