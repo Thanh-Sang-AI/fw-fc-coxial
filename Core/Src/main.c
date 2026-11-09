@@ -648,21 +648,10 @@ void IMU_task(void *argument)
       float az_world_up = (att.ax * sin_p) + (att.ay * sin_r * cos_p) + (att.az * cos_r * cos_p);
       float az_ned_mps2 = (1.0f - az_world_up) * 9.80665f;
 
-      // Phat hien dung yen (ZUPT) de triet tieu troi (drift) gia toc va van toc khi khong chuyen dong
-      float gyro_motion = fabsf(att.roll_rate) + fabsf(att.pitch_rate) + fabsf(att.yaw_rate);
-      float raw_acc_z   = az_ned_mps2 - alt_ekf.accel_bias;
-
-      if ((gyro_motion < 3.0f) && (fabsf(raw_acc_z) < 0.80f)) {
-        // Bo mach dung yen tren ban: Triet tieu van toc ve 0 va tu dong hoc bias gia toc
-        alt_ekf.vz = 0.0f;
-        alt_ekf.accel_bias += 0.01f * raw_acc_z; // Hoc bias theo nhiet do va do nghieng ban
-        az_ned_mps2 = alt_ekf.accel_bias;        // Khoa gia toc ve 0 tuyet doi
-      } else {
-        // Co chuyen dong thuc: Giam ro ri van toc nhe de tranh runaway khi giu tren tay
-        alt_ekf.vz *= 0.998f;
-        if (fabsf(raw_acc_z) < 0.05f) {
-          az_ned_mps2 = alt_ekf.accel_bias;
-        }
+      // Loc bo nhiễu nho (Deadband): Neu gia toc qua nho thi bo qua, khong tich phan
+      float raw_acc_z = az_ned_mps2 - alt_ekf.accel_bias;
+      if (fabsf(raw_acc_z) < 0.08f) { // Duoi ~8mg (~0.08 m/s^2) coi nhu nhieu trang cua chip, bo qua
+        az_ned_mps2 = alt_ekf.accel_bias;
       }
 
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
