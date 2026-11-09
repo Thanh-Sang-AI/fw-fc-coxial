@@ -666,9 +666,6 @@ void IMU_task(void *argument)
       float raw_acc_z = az_ned_mps2 - alt_ekf.accel_bias;
       if (fabsf(raw_acc_z) < accel_deadband) {
         az_ned_mps2 = alt_ekf.accel_bias;
-        // Khi gia toc roi vao vung nhieu, keo van toc ton du ve 0 (tranh bi ket/treo vz tren ban)
-        alt_ekf.vz *= 0.95f;
-        if (fabsf(alt_ekf.vz) < 0.002f) alt_ekf.vz = 0.0f;
       }
 
       altitude_ekf_predict(&alt_ekf, az_ned_mps2, imu_dt);
