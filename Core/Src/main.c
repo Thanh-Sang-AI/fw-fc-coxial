@@ -112,6 +112,8 @@ volatile float      stat_alt_var      = 0.0f;  // Phuong sai do cao (m^2)
 volatile float      stat_alt_rms      = 0.0f;  // RMS do cao (m)
 volatile float      stat_vz_var       = 0.0f;  // Phuong sai van toc leo (m/s)^2
 volatile float      stat_vz_rms       = 0.0f;  // RMS van toc leo (m/s)
+volatile float      stat_baro_var     = 0.0f;  // Phuong sai do cao Baro sau loc trung vi (m^2)
+volatile float      stat_baro_rms     = 0.0f;  // RMS do cao Baro sau loc trung vi (m)
 
 /* USER CODE END PV */
 
@@ -720,6 +722,26 @@ void Barometers_task(void *argument)
 
       // 4. Bat co bao cho IMU_task cap nhat EKF
       baro_has_new_data = true;
+
+      // 5. Tinh toan thong ke RMS va Phuong sai Baro tren cua so 2 giay (100 mau @ 50Hz)
+      static float baro_sum = 0.0f, baro_sum_sq = 0.0f;
+      static uint8_t baro_stat_cnt = 0;
+
+      baro_sum    += baro_filtered_alt;
+      baro_sum_sq += baro_filtered_alt * baro_filtered_alt;
+      baro_stat_cnt++;
+
+      if (baro_stat_cnt >= 100) {
+        float inv_n = 1.0f / 100.0f;
+        float m_baro = baro_sum * inv_n;
+        float var_baro = (baro_sum_sq * inv_n) - (m_baro * m_baro);
+
+        stat_baro_var = (var_baro > 0.0f) ? var_baro : 0.0f;
+        stat_baro_rms = sqrtf(baro_sum_sq * inv_n);
+
+        baro_sum = baro_sum_sq = 0.0f;
+        baro_stat_cnt = 0;
+      }
     }
     vTaskDelay(20); // 50 Hz ODR cua BMP388
   }
