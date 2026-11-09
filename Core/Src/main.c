@@ -51,6 +51,7 @@ I2C_HandleTypeDef hi2c2;
 
 SPI_HandleTypeDef hspi1;
 
+UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart7;
 
 /* Definitions for Led_Blink */
@@ -71,6 +72,13 @@ const osThreadAttr_t IMU_Task_attributes = {
 osThreadId_t Barometers_TaskHandle;
 const osThreadAttr_t Barometers_Task_attributes = {
   .name = "Barometers_Task",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityHigh3,
+};
+/* Definitions for Op_Flo_Task */
+osThreadId_t Op_Flo_TaskHandle;
+const osThreadAttr_t Op_Flo_Task_attributes = {
+  .name = "Op_Flo_Task",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityHigh3,
 };
@@ -108,6 +116,18 @@ volatile float      ned_vz            = 0.0f;  // Van toc NED Vz (m/s): am khi b
 volatile float      estimated_alt     = 0.0f;  // Do cao thuc te (m): duong khi bay len
 volatile float      estimated_vz      = 0.0f;  // Van toc leo (m/s): duong khi bay len
 
+// Kiem tra du lieu MTF-01P (UART5) tren Live Watch
+volatile uint8_t  opflow_rx_byte          = 0;
+volatile uint32_t opflow_rx_byte_count    = 0;    // Tang lien tuc khi nhan byte tu UART5
+volatile uint32_t opflow_frame_count      = 0;    // So frame hop le nhan duoc
+volatile uint8_t  opflow_mavlink_ver      = 0;    // 1 (v1 STX=0xFE), 2 (v2 STX=0xFD), 0xEF (Micolink)
+volatile uint32_t opflow_last_msg_id      = 0;    // ID goi tin gan nhat (0=Heartbeat, 100/106=Flow, 132=Distance)
+volatile uint8_t  opflow_last_sys_id      = 0;    // System ID cua sensor
+volatile uint8_t  opflow_last_comp_id     = 0;    // Component ID cua sensor
+volatile uint8_t  opflow_last_payload_len = 0;    // Do dai payload
+volatile float    opflow_frame_hz         = 0.0f; // Tan so frame nhan duoc (Hz)
+volatile uint32_t opflow_last_byte_time   = 0;    // Thoi diem nhan byte cuoi (ms)
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -117,9 +137,11 @@ static void MX_GPIO_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_UART7_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_UART5_Init(void);
 void Led_blink(void *argument);
 void IMU_task(void *argument);
 void Barometers_task(void *argument);
+void Op_Flo_task(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -165,6 +187,7 @@ int main(void)
   MX_SPI1_Init();
   MX_UART7_Init();
   MX_I2C2_Init();
+  MX_UART5_Init();
   /* USER CODE BEGIN 2 */
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
@@ -215,6 +238,9 @@ int main(void)
 
   /* creation of Barometers_Task */
   Barometers_TaskHandle = osThreadNew(Barometers_task, NULL, &Barometers_Task_attributes);
+
+  /* creation of Op_Flo_Task */
+  Op_Flo_TaskHandle = osThreadNew(Op_Flo_task, NULL, &Op_Flo_Task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -405,6 +431,54 @@ static void MX_SPI1_Init(void)
 }
 
 /**
+  * @brief UART5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART5_Init(void)
+{
+
+  /* USER CODE BEGIN UART5_Init 0 */
+
+  /* USER CODE END UART5_Init 0 */
+
+  /* USER CODE BEGIN UART5_Init 1 */
+
+  /* USER CODE END UART5_Init 1 */
+  huart5.Instance = UART5;
+  huart5.Init.BaudRate = 115200;
+  huart5.Init.WordLength = UART_WORDLENGTH_8B;
+  huart5.Init.StopBits = UART_STOPBITS_1;
+  huart5.Init.Parity = UART_PARITY_NONE;
+  huart5.Init.Mode = UART_MODE_TX_RX;
+  huart5.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart5.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart5.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart5.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart5.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart5, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart5, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART5_Init 2 */
+
+  /* USER CODE END UART5_Init 2 */
+
+}
+
+/**
   * @brief UART7 Initialization Function
   * @param None
   * @retval None
@@ -467,9 +541,11 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOI_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
 
@@ -514,6 +590,79 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	{
 		mavlink_uart_rx_callback(&mav);
 	}
+	else if (huart->Instance == UART5)
+	{
+		opflow_rx_byte_count++;
+		uint32_t now = HAL_GetTick();
+
+		static uint8_t  frame_buf[280];
+		static uint16_t frame_idx = 0;
+		static uint16_t target_len = 0;
+		static uint8_t  detected_ver = 0;
+
+		// Neu co khoang lang > 10ms giua cac byte ma chua du frame, reset de re-sync
+		if (frame_idx > 0 && (now - opflow_last_byte_time > 10)) {
+			frame_idx = 0;
+		}
+		opflow_last_byte_time = now;
+
+		if (frame_idx == 0) {
+			if (opflow_rx_byte == 0xFD) { // MAVLink v2
+				frame_buf[frame_idx++] = opflow_rx_byte;
+				target_len = 12; // 10 header + 0 payload + 2 crc
+				detected_ver = 2;
+			} else if (opflow_rx_byte == 0xFE) { // MAVLink v1
+				frame_buf[frame_idx++] = opflow_rx_byte;
+				target_len = 8; // 6 header + 0 payload + 2 crc
+				detected_ver = 1;
+			} else if (opflow_rx_byte == 0xEF) { // Micolink (che do goc MicoAir)
+				frame_buf[frame_idx++] = opflow_rx_byte;
+				target_len = 7; // 6 header + 0 payload + 1 crc
+				detected_ver = 0xEF;
+			}
+		} else {
+			frame_buf[frame_idx++] = opflow_rx_byte;
+
+			if (detected_ver == 2) {
+				if (frame_idx == 2) target_len = 12 + frame_buf[1]; // frame_buf[1] la payload len
+				if (frame_idx == 3 && (frame_buf[2] & 0x01)) target_len += 13; // Signature 13 byte
+			} else if (detected_ver == 1) {
+				if (frame_idx == 2) target_len = 8 + frame_buf[1];  // frame_buf[1] la payload len
+			} else if (detected_ver == 0xEF) {
+				if (frame_idx == 6) target_len = 7 + frame_buf[5];  // frame_buf[5] la payload len
+			}
+
+			if (frame_idx >= target_len || frame_idx >= sizeof(frame_buf)) {
+				if (detected_ver == 2) {
+					opflow_mavlink_ver      = 2;
+					opflow_last_payload_len = frame_buf[1];
+					opflow_last_sys_id      = frame_buf[5];
+					opflow_last_comp_id     = frame_buf[6];
+					opflow_last_msg_id      = (uint32_t)frame_buf[7] |
+					                          ((uint32_t)frame_buf[8] << 8) |
+					                          ((uint32_t)frame_buf[9] << 16);
+					opflow_frame_count++;
+				} else if (detected_ver == 1) {
+					opflow_mavlink_ver      = 1;
+					opflow_last_payload_len = frame_buf[1];
+					opflow_last_sys_id      = frame_buf[3];
+					opflow_last_comp_id     = frame_buf[4];
+					opflow_last_msg_id      = (uint32_t)frame_buf[5];
+					opflow_frame_count++;
+				} else if (detected_ver == 0xEF) {
+					opflow_mavlink_ver      = 0xEF;
+					opflow_last_payload_len = frame_buf[5];
+					opflow_last_sys_id      = frame_buf[2];
+					opflow_last_comp_id     = frame_buf[1];
+					opflow_last_msg_id      = (uint32_t)frame_buf[3];
+					opflow_frame_count++;
+				}
+				frame_idx = 0;
+			}
+		}
+
+		HAL_UART_Receive_IT(&huart5, (uint8_t *)&opflow_rx_byte, 1);
+	}
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -521,6 +670,11 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 	if (huart->Instance == UART7)
 	{
 		mavlink_uart_error_callback(&mav);
+	}
+	else if (huart->Instance == UART5)
+	{
+		__HAL_UART_CLEAR_FLAG(&huart5, UART_CLEAR_OREF | UART_CLEAR_FEF | UART_CLEAR_NEF);
+		HAL_UART_Receive_IT(&huart5, (uint8_t *)&opflow_rx_byte, 1);
 	}
 }
 /* USER CODE END 4 */
@@ -693,6 +847,44 @@ void Barometers_task(void *argument)
     vTaskDelay(20); // 50 Hz ODR cua BMP388
   }
   /* USER CODE END Barometers_task */
+}
+
+/* USER CODE BEGIN Header_Op_Flo_task */
+/**
+* @brief Function implementing the Op_Flo_Task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Op_Flo_task */
+void Op_Flo_task(void *argument)
+{
+  /* USER CODE BEGIN Op_Flo_task */
+  // Bat ngat nhan 1 byte UART5 tu MTF-01P
+  HAL_UART_Receive_IT(&huart5, (uint8_t *)&opflow_rx_byte, 1);
+
+  uint32_t last_calc_time = HAL_GetTick();
+  uint32_t last_count = 0;
+
+  /* Infinite loop */
+  for(;;)
+  {
+    uint32_t now = HAL_GetTick();
+    uint32_t dt_ms = now - last_calc_time;
+    if (dt_ms >= 1000) {
+      uint32_t frames = opflow_frame_count - last_count;
+      last_count = opflow_frame_count;
+      opflow_frame_hz = (float)frames * 1000.0f / (float)dt_ms;
+      last_calc_time = now;
+    }
+
+    // Tu dong khoi phuc ngat neu bi treo boi nhieu
+    if (huart5.RxState == HAL_UART_STATE_READY) {
+      HAL_UART_Receive_IT(&huart5, (uint8_t *)&opflow_rx_byte, 1);
+    }
+
+    osDelay(50);
+  }
+  /* USER CODE END Op_Flo_task */
 }
 
  /* MPU Configuration */
