@@ -35,27 +35,6 @@ typedef struct {
 void  kalman_angle_init(kalman_angle_t *k, float q_angle, float q_bias, float r_measure);
 float kalman_angle_update(kalman_angle_t *k, float new_angle_acc, float new_rate_gyro, float dt);
 
-typedef struct {
-    float roll;        // Goc Roll (deg)
-    float pitch;       // Goc Pitch (deg)
-    float yaw;         // Goc Yaw (deg)
-    float roll_rate;   // Toc do goc Roll sau loc (deg/s)
-    float pitch_rate;  // Toc do goc Pitch sau loc (deg/s)
-    float yaw_rate;    // Toc do goc Yaw sau loc (deg/s)
-    float ax;          // Gia toc than truc X sau loc (g)
-    float ay;          // Gia toc than truc Y sau loc (g)
-    float az;          // Gia toc than truc Z sau loc (g)
-} attitude_t;
-
-typedef struct {
-    float x;           // Vi tri ngang X (m)
-    float y;           // Vi tri ngang Y (m)
-    float z;           // Do cao Z (m)
-    float vx;          // Van toc ngang Vx (m/s)
-    float vy;          // Van toc ngang Vy (m/s)
-    float vz;          // Van toc leo Vz (m/s)
-} pos_vel_t;
-
 /* =========================================================================
    3. Median Filter (Co the cau hinh kich thuoc cua so: 3, 5, 9... mau)
    ========================================================================= */
@@ -96,6 +75,7 @@ void altitude_ekf_init(altitude_ekf_t *ekf, float acc_noise, float bias_noise, f
 void altitude_ekf_reset(altitude_ekf_t *ekf, float initial_alt);
 void altitude_ekf_predict(altitude_ekf_t *ekf, float accel_z_world, float dt);
 void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt);
+void altitude_ekf_update_tof(altitude_ekf_t *ekf, float tof_alt, float tof_noise);
 
 /* =========================================================================
    5. Outlier Rejection Filter (Khu nhieu gai bien thien dot bien)
@@ -133,6 +113,28 @@ void  kalman_pv_reset(kalman_pv_t *k, float p, float v);
 void  kalman_pv_predict(kalman_pv_t *k, float dt);
 void  kalman_pv_update_pos(kalman_pv_t *k, float pos_meas);
 void  kalman_pv_update_vel(kalman_pv_t *k, float vel_meas);
+
+/* =========================================================================
+   7. 3-State Horizontal EKF (IMU Accel XY + Optical Flow Velocity)
+   Trang thai: [Position pos (m), Velocity vel (m/s), Accel bias (m/s^2)]
+   - Predict: 500 Hz voi gia toc tuyen tinh
+   - Update: 100 Hz voi van toc do tu Optical Flow
+   ========================================================================= */
+typedef struct {
+    float pos;          // Vi tri uoc luong (m)
+    float vel;          // Van toc uoc luong (m/s)
+    float accel_bias;   // Bias gia toc (m/s^2)
+    float P[3][3];      // Ma tran hiep phuong sai
+    float Q_accel;      // Phuong sai nhieu gia toc
+    float Q_bias;       // Phuong sai nhieu bias gia toc
+    float R_vel;        // Phuong sai nhieu do luong van toc
+    bool  initialized;
+} horizontal_ekf_t;
+
+void horizontal_ekf_init(horizontal_ekf_t *ekf, float acc_noise, float bias_noise, float vel_noise);
+void horizontal_ekf_reset(horizontal_ekf_t *ekf, float initial_pos, float initial_vel);
+void horizontal_ekf_predict(horizontal_ekf_t *ekf, float accel_linear, float dt);
+void horizontal_ekf_update_vel(horizontal_ekf_t *ekf, float vel_meas);
 
 #ifdef __cplusplus
 }

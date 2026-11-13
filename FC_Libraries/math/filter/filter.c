@@ -1,6 +1,7 @@
 #include "math/filter/filter.h"
 #include <math.h>
 #include <stddef.h>
+#include <string.h>
 
 /* =========================================================================
    1. Biquad 2-Pole Butterworth Low-Pass Filter
@@ -202,31 +203,30 @@ void altitude_ekf_predict(altitude_ekf_t *ekf, float accel_z_world, float dt)
     ekf->P[2][1] = ekf->P[1][2];
 }
 
-void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt)
+static void altitude_ekf_update_internal(altitude_ekf_t *ekf, float meas_alt, float r_meas, bool use_gate)
 {
     if (ekf == NULL) return;
     if (!ekf->initialized) {
-        altitude_ekf_reset(ekf, baro_alt);
+        altitude_ekf_reset(ekf, meas_alt);
         return;
     }
 
-    float y = baro_alt - ekf->z;
-
-    float S = ekf->P[0][0] + ekf->R_baro;
+    float y = meas_alt - ekf->z;
+    float S = ekf->P[0][0] + r_meas;
     if (S <= 0.0f) return;
 
-    /* Innovation consistency gate: 5.0 * sqrt(S) (chuan PX4 EKF2_BARO_GATE = 5.0) */
-    /* Chi tu choi cap nhat neu Baro nhay vot dot ngot qua 5-sigma */
-    float gate = 5.0f * sqrtf(S);
-    if (gate < 1.0f) gate = 1.0f;
-    if (fabsf(y) > gate) {
-        ekf->innov_fail_count++;
-        if (ekf->innov_fail_count < 50) { // 50 mau ~ 1 giay o 50Hz
-            return; // Tu choi cap nhat mau do dot bien
-        } else {
-            // Neu lech qua 1 giay lien tiep, tu dong dong bo lai theo Baro de tranh bi ket
-            altitude_ekf_reset(ekf, baro_alt);
-            return;
+    if (use_gate) {
+        /* Innovation consistency gate: 5.0 * sqrt(S) (chuan PX4 EKF2_BARO_GATE = 5.0) */
+        float gate = 5.0f * sqrtf(S);
+        if (gate < 1.0f) gate = 1.0f;
+        if (fabsf(y) > gate) {
+            ekf->innov_fail_count++;
+            if (ekf->innov_fail_count < 50) { // 50 mau ~ 1 giay o 50Hz
+                return;
+            } else {
+                altitude_ekf_reset(ekf, meas_alt);
+                return;
+            }
         }
     }
     ekf->innov_fail_count = 0;
@@ -261,6 +261,18 @@ void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt)
     ekf->P[2][0] = ekf->P[0][2];
     ekf->P[2][1] = ekf->P[1][2];
     ekf->P[2][2] -= K2 * P02;
+}
+
+void altitude_ekf_update_baro(altitude_ekf_t *ekf, float baro_alt)
+{
+    if (ekf == NULL) return;
+    altitude_ekf_update_internal(ekf, baro_alt, ekf->R_baro, true);
+}
+
+void altitude_ekf_update_tof(altitude_ekf_t *ekf, float tof_alt, float tof_noise)
+{
+    if (ekf == NULL) return;
+    altitude_ekf_update_internal(ekf, tof_alt, tof_noise * tof_noise, false);
 }
 
 /* =========================================================================
@@ -405,4 +417,103 @@ void kalman_pv_update_vel(kalman_pv_t *k, float vel_meas)
     k->P[0][1] -= K0 * p11;
     k->P[1][0] -= K1 * p10;
     k->P[1][1] -= K1 * p11;
+}
+
+/* =========================================================================
+   7. 3-State Horizontal EKF (IMU Accel XY + Optical Flow Velocity)
+   ========================================================================= */
+void horizontal_ekf_init(horizontal_ekf_t *ekf, float acc_noise, float bias_noise, float vel_noise)
+{
+    if (ekf == NULL) return;
+    memset(ekf, 0, sizeof(horizontal_ekf_t));
+    ekf->Q_accel = acc_noise * acc_noise;
+    ekf->Q_bias  = bias_noise * bias_noise;
+    ekf->R_vel   = vel_noise * vel_noise;
+    ekf->P[0][0] = 1.0f;
+    ekf->P[1][1] = 1.0f;
+    ekf->P[2][2] = 0.1f;
+    ekf->initialized = false;
+}
+
+void horizontal_ekf_reset(horizontal_ekf_t *ekf, float initial_pos, float initial_vel)
+{
+    if (ekf == NULL) return;
+    ekf->pos = initial_pos;
+    ekf->vel = initial_vel;
+    ekf->accel_bias = 0.0f;
+    memset(ekf->P, 0, sizeof(ekf->P));
+    ekf->P[0][0] = 0.1f;
+    ekf->P[1][1] = 0.1f;
+    ekf->P[2][2] = 0.05f;
+    ekf->initialized = true;
+}
+
+void horizontal_ekf_predict(horizontal_ekf_t *ekf, float accel_linear, float dt)
+{
+    if (ekf == NULL || !ekf->initialized || dt <= 0.0f) return;
+
+    /* 1. Predict state: dong hoc quan tinh strapdown */
+    float a = accel_linear - ekf->accel_bias;
+    ekf->pos += ekf->vel * dt + 0.5f * a * dt * dt;
+    ekf->vel += a * dt;
+
+    /* 2. Predict covariance: P = F * P * F^T + Q */
+    float P00 = ekf->P[0][0], P01 = ekf->P[0][1], P02 = ekf->P[0][2];
+    float P11 = ekf->P[1][1], P12 = ekf->P[1][2], P22 = ekf->P[2][2];
+
+    ekf->P[0][0] = P00 + dt * (2.0f * P01 + dt * P11);
+    ekf->P[0][1] = P01 + dt * (P11 - P02 - dt * P12);
+    ekf->P[0][2] = P02 + dt * P12;
+    ekf->P[1][1] = P11 + dt * (-2.0f * P12 + dt * P22) + ekf->Q_accel * dt;
+    ekf->P[1][2] = P12 - dt * P22;
+    ekf->P[2][2] = P22 + ekf->Q_bias * dt;
+
+    /* Dam bao tinh doi xung */
+    ekf->P[1][0] = ekf->P[0][1];
+    ekf->P[2][0] = ekf->P[0][2];
+    ekf->P[2][1] = ekf->P[1][2];
+}
+
+void horizontal_ekf_update_vel(horizontal_ekf_t *ekf, float vel_meas)
+{
+    if (ekf == NULL) return;
+    if (!ekf->initialized) {
+        horizontal_ekf_reset(ekf, 0.0f, vel_meas);
+        return;
+    }
+
+    // y = z - H * x  (H = [0, 1, 0])
+    float y = vel_meas - ekf->vel;
+    float S = ekf->P[1][1] + ekf->R_vel;
+    if (S <= 1e-6f) return;
+
+    /* Kalman Gain */
+    float K0 = ekf->P[0][1] / S;
+    float K1 = ekf->P[1][1] / S;
+    float K2 = ekf->P[2][1] / S;
+
+    /* Cap nhat trang thai */
+    ekf->pos        += K0 * y;
+    ekf->vel        += K1 * y;
+    ekf->accel_bias += K2 * y;
+
+    if (ekf->accel_bias > 1.5f)  ekf->accel_bias = 1.5f;
+    if (ekf->accel_bias < -1.5f) ekf->accel_bias = -1.5f;
+
+    /* Cap nhat hiep phuong sai: P = (I - K*H) * P */
+    float P01 = ekf->P[0][1];
+    float P11 = ekf->P[1][1];
+    float P12 = ekf->P[1][2];
+
+    ekf->P[0][0] -= K0 * P01;
+    ekf->P[0][1] -= K0 * P11;
+    ekf->P[0][2] -= K0 * P12;
+
+    ekf->P[1][0] = ekf->P[0][1];
+    ekf->P[1][1] -= K1 * P11;
+    ekf->P[1][2] -= K1 * P12;
+
+    ekf->P[2][0] = ekf->P[0][2];
+    ekf->P[2][1] = ekf->P[1][2];
+    ekf->P[2][2] -= K2 * P12;
 }
