@@ -118,18 +118,30 @@ float             gyro_bias[3] = {0.0f};
 BMP388_t            baro;
 bool                baro_status = false;
 
-// Pipeline loc Barometer va EKF do cao (Chuan PX4 NED: Z-down noi bo, Z-up xuat ra drone_state)
+// Pipeline loc Barometer va EKF do cao doc lap (Chuan PX4 NED: Z-down noi bo, Z-up xuat ra baro_state)
 median_filter_t     filter_baro_median;
 biquad2p_filter_t   filter_baro;
-altitude_ekf_t      alt_ekf;
-volatile bool       baro_has_new_data = false;
+altitude_ekf_t      baro_ekf;
 volatile float      baro_filtered_alt = 0.0f;
+
+// Struct trang thai do cao doc lap cua Barometer
+typedef struct {
+  float z;   // Do cao uoc luong tu Barometer EKF (m, Z-up)
+  float vz;  // Van toc thang dung tu Barometer EKF (m/s, Vz-up)
+} baro_state_t;
+volatile baro_state_t baro_state = {0};
+
+// Gia toc tuyen tinh chia se tu IMU_task (500 Hz) cho Op_Flo_task va Barometers_task
+volatile float      imu_ax_linear    = 0.0f;
+volatile float      imu_ay_linear    = 0.0f;
+volatile float      imu_az_ned_mps2  = 0.0f;
 
 mtf01p_t            opflow;
 
-// Bo loc Median (chong gai ToF), Biquad LPF ToF va EKF cho MTF-01P
+// Bo loc Median (chong gai ToF), Biquad LPF ToF va EKF do cao ToF
 median_filter_t     filter_tof_median;
 biquad2p_filter_t   filter_opflow_z;
+altitude_ekf_t      alt_ekf;
 
 // Bo loc Median 3 mau va Biquad LPF bac 2 cho Optical Flow (triet tieu gai va rang cua)
 median_filter_t     filter_flow_med_x;
@@ -139,7 +151,6 @@ biquad2p_filter_t   filter_flow_lpf_y;
 
 horizontal_ekf_t    ekf_x;
 horizontal_ekf_t    ekf_y;
-volatile bool       flow_has_new_data = false;
 volatile float      flow_meas_vx      = 0.0f;
 volatile float      flow_meas_vy      = 0.0f;
 volatile float      flow_filt_x       = 0.0f;  // Optical Flow X sau Median + LPF bac 2 (rad/s)
@@ -149,11 +160,9 @@ volatile float      flow_diff_y       = 0.0f;  // (-flow_filt_x + gyro_roll_rad)
 volatile float      gyro_pitch_rad    = 0.0f;  // Gyro Pitch (rad/s)
 volatile float      gyro_roll_rad     = 0.0f;  // Gyro Roll (rad/s)
 
-volatile bool       tof_has_new_data = false;
 volatile float      tof_filtered_alt = 0.0f;
 
 volatile drone_state_t drone_state   = {0}; // 12 trang thai chung cho toan bo drone
-volatile uint8_t       tof_alt_valid = 0;   // 1 = EKF do cao uu tien ToF, 0 = dung Baro
 
 /* USER CODE END PV */
 
@@ -686,11 +695,6 @@ void IMU_task(void *argument)
   biquad2p_filter_reset(&filter_accel[2], 1.0f); // Dat san 1g cho truc Z khi de yen tren ban
   kalman_angle_init(&kalman_roll,  0.0015f, 0.003f, 0.03f);
   kalman_angle_init(&kalman_pitch, 0.0015f, 0.003f, 0.03f);
-  // EKF do cao Z: tin IMU thap (5.0 m/s^2), tin ToF cao (0.012 m -> K0~0.60), Baro du phong (2.5 m)
-  altitude_ekf_init(&alt_ekf, 5.0f, 0.02f, 2.5f);
-  // EKF mat phang ngang X/Y:
-  horizontal_ekf_init(&ekf_x, FLOW_ACC_NOISE, FLOW_ACC_B_NOISE, FLOW_VEL_NOISE);
-  horizontal_ekf_init(&ekf_y, FLOW_ACC_NOISE, FLOW_ACC_B_NOISE, FLOW_VEL_NOISE);
   icm45686_calibrate_gyro(&imu, gyro_bias);
 
   uint32_t last_cycle = DWT->CYCCNT;
@@ -728,60 +732,15 @@ void IMU_task(void *argument)
         if (drone_state.yaw < -180.0f) drone_state.yaw += 360.0f;
       }
 
-      // 3. EKF du doan do cao Z va mat phang ngang X/Y o 500 Hz (Predict step)
+      // 3. Tinh gia toc tuyen tinh chia se cho Op_Flo_task (100 Hz) va Barometers_task (50 Hz)
       float sin_p = sinf(drone_state.pitch * DEG2RAD);
       float cos_p = cosf(drone_state.pitch * DEG2RAD);
       float sin_r = sinf(drone_state.roll  * DEG2RAD);
       float cos_r = cosf(drone_state.roll  * DEG2RAD);
 
-      // Gia toc tuyen tinh (tru thanh phan trong luc theo he quy chieu than drone)
-      float ax_linear = (ax + sin_p) * 9.80665f;
-      float ay_linear = (ay - sin_r * cos_p) * 9.80665f;
-      float az_ned_mps2 = (1.0f - ((ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p))) * 9.80665f;
-
-      // Loc deadband gia toc triet tieu trôi tinh
-      if (fabsf(ax_linear - ekf_x.accel_bias) < IMU_ACCEL_DEADBAND) {
-        ax_linear = ekf_x.accel_bias;
-      }
-      if (fabsf(ay_linear - ekf_y.accel_bias) < IMU_ACCEL_DEADBAND) {
-        ay_linear = ekf_y.accel_bias;
-      }
-      if (fabsf(az_ned_mps2 - alt_ekf.accel_bias) < IMU_ACCEL_DEADBAND) {
-        az_ned_mps2 = alt_ekf.accel_bias;
-        alt_ekf.vz *= 0.99f;
-        if (fabsf(alt_ekf.vz) < 0.001f) alt_ekf.vz = 0.0f;
-      }
-
-      altitude_ekf_predict(&alt_ekf, az_ned_mps2, dt);
-      horizontal_ekf_predict(&ekf_x, ax_linear, dt);
-      horizontal_ekf_predict(&ekf_y, ay_linear, dt);
-
-      // 4. Cap nhat EKF tu Optical Flow (100 Hz), ToF (100 Hz), Baro (50 Hz)
-      if (flow_has_new_data) {
-        flow_has_new_data = false;
-        horizontal_ekf_update_vel(&ekf_x, flow_meas_vx);
-        horizontal_ekf_update_vel(&ekf_y, flow_meas_vy);
-      }
-      if (tof_has_new_data) {
-        tof_has_new_data = false;
-        altitude_ekf_update_tof(&alt_ekf, -tof_filtered_alt, TOF_ALT_NOISE);
-      }
-      if (baro_has_new_data) {
-        baro_has_new_data = false;
-        if (!tof_alt_valid) {
-          altitude_ekf_update_baro(&alt_ekf, -baro_filtered_alt);
-        }
-      }
-
-      taskENTER_CRITICAL();
-      drone_state.x  = ekf_x.pos;
-      drone_state.y  = ekf_y.pos;
-      drone_state.vx = ekf_x.vel;
-      drone_state.vy = ekf_y.vel;
-      drone_state.z  = -alt_ekf.z;
-      drone_state.vz = -alt_ekf.vz;
-      taskEXIT_CRITICAL();
-
+      imu_ax_linear   = (ax + sin_p) * 9.80665f;
+      imu_ay_linear   = (ay - sin_r * cos_p) * 9.80665f;
+      imu_az_ned_mps2 = (1.0f - ((ax * sin_p) + (ay * sin_r * cos_p) + (az * cos_r * cos_p))) * 9.80665f;
     }
 
     vTaskDelay(2);
@@ -801,15 +760,14 @@ void Barometers_task(void *argument)
   /* USER CODE BEGIN Barometers_task */
   median_filter_init(&filter_baro_median, 3);
   biquad2p_filter_init(&filter_baro, 10.0f, 50.0f);
+  altitude_ekf_init(&baro_ekf, 2.0f, 0.01f, 0.25f);
 
   baro_status = BMP388_Init(&baro, &hi2c2);
   if (baro_status) {
     BMP388_CalibrateGround(&baro, 50);
     median_filter_reset(&filter_baro_median, baro.altitude_m);
     biquad2p_filter_reset(&filter_baro, baro.altitude_m);
-    if (!alt_ekf.initialized) {
-      altitude_ekf_reset(&alt_ekf, -baro.altitude_m); // PX4 NED: Z = -altitude
-    }
+    altitude_ekf_reset(&baro_ekf, -baro.altitude_m); // PX4 NED: Z = -altitude
   }
 
   /* Infinite loop */
@@ -818,9 +776,20 @@ void Barometers_task(void *argument)
     if (baro_status) {
       BMP388_ReadData(&baro);
 
-      // Loc trung vi 3 mau chuan PX4 va bao co cho IMU_task cap nhat EKF
+      // Loc trung vi 3 mau
       baro_filtered_alt = median_filter_apply(&filter_baro_median, baro.altitude_m);
-      baro_has_new_data = true;
+
+      // Kalman EKF do cao doc lap cho Barometer @ 50 Hz (dt = 0.02s)
+      float az = imu_az_ned_mps2;
+      if (fabsf(az - baro_ekf.accel_bias) < IMU_ACCEL_DEADBAND) {
+        az = baro_ekf.accel_bias;
+      }
+      altitude_ekf_predict(&baro_ekf, az, 0.02f);
+      altitude_ekf_update_baro(&baro_ekf, -baro_filtered_alt);
+
+      // Luu vao struct rieng baro_state, khong ghi vao 12 trang thai drone_state
+      baro_state.z  = -baro_ekf.z;
+      baro_state.vz = -baro_ekf.vz;
     }
     vTaskDelay(20); // 50 Hz ODR cua BMP388
   }
@@ -857,6 +826,11 @@ void Op_Flo_task(void *argument)
   biquad2p_filter_reset(&filter_flow_lpf_x, 0.0f);
   biquad2p_filter_reset(&filter_flow_lpf_y, 0.0f);
 
+  // Khoi tao EKF do cao ToF va EKF mat phang ngang X/Y @ 100 Hz
+  altitude_ekf_init(&alt_ekf, 5.0f, 0.02f, 2.5f);
+  horizontal_ekf_init(&ekf_x, FLOW_ACC_NOISE, FLOW_ACC_B_NOISE, FLOW_VEL_NOISE);
+  horizontal_ekf_init(&ekf_y, FLOW_ACC_NOISE, FLOW_ACC_B_NOISE, FLOW_VEL_NOISE);
+
   /* Infinite loop @ 100 Hz */
   for(;;)
   {
@@ -892,15 +866,43 @@ void Op_Flo_task(void *argument)
     flow_diff_x =  flow_filt_y - gyro_pitch_rad;
     flow_diff_y = -flow_filt_x + gyro_roll_rad;
 
-    // 4. Cung cap van toc quang hoc do duoc cho EKF ngang trong IMU_task @ 500 Hz
+    // 4. Van toc quang hoc do duoc (m/s)
     flow_meas_vx = flow_diff_x * h;
     flow_meas_vy = flow_diff_y * h;
-    flow_has_new_data = (opflow.raw_distance_cm > 0);
-
-    // 5. Cap nhat do cao da bu nghieng va loc cho Kalman EKF do cao
     tof_filtered_alt = h;
-    tof_alt_valid    = (opflow.raw_distance_cm > 0);
-    tof_has_new_data = (opflow.raw_distance_cm > 0);
+
+    // 5. Chay Kalman EKF cho X, Y va Z truc tiep tai nhip 100 Hz
+    float ax = imu_ax_linear;
+    float ay = imu_ay_linear;
+    float az = imu_az_ned_mps2;
+
+    if (fabsf(ax - ekf_x.accel_bias) < IMU_ACCEL_DEADBAND) ax = ekf_x.accel_bias;
+    if (fabsf(ay - ekf_y.accel_bias) < IMU_ACCEL_DEADBAND) ay = ekf_y.accel_bias;
+    if (fabsf(az - alt_ekf.accel_bias) < IMU_ACCEL_DEADBAND) {
+      az = alt_ekf.accel_bias;
+      alt_ekf.vz *= 0.99f;
+      if (fabsf(alt_ekf.vz) < 0.001f) alt_ekf.vz = 0.0f;
+    }
+
+    horizontal_ekf_predict(&ekf_x, ax, dt);
+    horizontal_ekf_predict(&ekf_y, ay, dt);
+    altitude_ekf_predict(&alt_ekf, az, dt);
+
+    if (opflow.raw_distance_cm > 0) {
+      horizontal_ekf_update_vel(&ekf_x, flow_meas_vx);
+      horizontal_ekf_update_vel(&ekf_y, flow_meas_vy);
+      altitude_ekf_update_tof(&alt_ekf, -h, TOF_ALT_NOISE);
+    }
+
+    // 6. Luu truc tiep vao bo 12 trang thai chung cua drone
+    taskENTER_CRITICAL();
+    drone_state.x  = ekf_x.pos;
+    drone_state.y  = ekf_y.pos;
+    drone_state.vx = ekf_x.vel;
+    drone_state.vy = ekf_y.vel;
+    drone_state.z  = -alt_ekf.z;
+    drone_state.vz = -alt_ekf.vz;
+    taskEXIT_CRITICAL();
 
     vTaskDelay(10); // 100 Hz
   }
